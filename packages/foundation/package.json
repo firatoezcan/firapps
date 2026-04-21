@@ -1,0 +1,26 @@
+{
+  "name": "@firapps/foundation",
+  "version": "0.0.0",
+  "description": "Shared product metadata and copy for firapps applications.",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
