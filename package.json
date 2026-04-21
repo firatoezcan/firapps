@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

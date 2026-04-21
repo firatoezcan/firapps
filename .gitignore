@@ -11,6 +11,8 @@ node_modules
 .vite-hooks
 dist
 dist-ssr
+.output
+.tanstack
 *.local
 
 # Editor directories and files

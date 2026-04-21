@@ -1,0 +1,16 @@
+.git
+.github
+.agents
+.claude
+.vite-hooks
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+apps/*/.output
+apps/*/dist
+packages/*/dist
+dev/.tiltbuild
+coverage
+*.log
+docs
+

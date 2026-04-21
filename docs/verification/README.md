@@ -7,4 +7,7 @@ Current command groups:
 
 - repo-wide Vite+ verification
 - local hook configuration
-- browser smoke for `apps/web`
+- backend migration, Better Auth, and API smoke
+- Better Auth browser and proxy verification
+- local Tilt and CNPG backend verification
+- image publication and downstream-dispatch verification

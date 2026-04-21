@@ -1,0 +1,39 @@
+{
+  "name": "internal-api",
+  "type": "module",
+  "scripts": {
+    "auth:generate": "vp run backend-common#build && vp run db#build && vp run internal-api#build && better-auth generate --config ./dist/auth.js --output ./src/db/auth-schema.generated.ts --yes",
+    "check": "vp check",
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/migrate.ts",
+    "migrate:generate": "drizzle-kit generate",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "catalog:",
+    "@firapps/backend-common": "workspace:*",
+    "@firapps/db": "workspace:*",
+    "@hono/node-server": "catalog:",
+    "@react-email/components": "catalog:",
+    "@react-email/render": "catalog:",
+    "better-auth": "catalog:",
+    "drizzle-orm": "catalog:",
+    "evlog": "catalog:",
+    "hono": "catalog:",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@better-auth/cli": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "drizzle-kit": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

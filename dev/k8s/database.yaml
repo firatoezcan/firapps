@@ -1,0 +1,19 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: firapps-dev-db
+  labels:
+    app.kubernetes.io/name: firapps-dev-db
+    app.kubernetes.io/part-of: firapps
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  bootstrap:
+    initdb:
+      database: firapps
+      owner: firapps_app
+      secret:
+        name: firapps-dev-db-app
+  storage:
+    size: 2Gi
+    storageClass: standard
