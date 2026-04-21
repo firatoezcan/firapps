@@ -34,6 +34,7 @@ export const internalApiEnv = readServiceEnv(
     ADMIN_WEB_URL: z.string().url().default("http://127.0.0.1:3001"),
     ALLOWED_ORIGINS: z.string().default(defaultAllowedOrigins),
     BETTER_AUTH_SECRET: z.string().min(32),
+    BETTER_AUTH_COOKIE_DOMAIN: z.string().min(1).optional(),
   }),
 );
 

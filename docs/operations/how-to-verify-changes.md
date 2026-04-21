@@ -159,6 +159,10 @@ Expected signal:
 - the frontends serve `/api/auth/*`, `/api/public/*`, and `/api/internal/*`
   through their same-origin TanStack Start server routes instead of returning a
   TanStack `Not Found` page
+- for subdomain-backed proofs such as `customer.firapps.platform.localhost`
+  plus `admin.firapps.platform.localhost`, `internal-api` must run with
+  `BETTER_AUTH_COOKIE_DOMAIN` set to the shared parent domain so the owner
+  session can move from customer-web to admin-web
 
 Failure interpretation:
 
@@ -167,7 +171,8 @@ Failure interpretation:
 - if Mailpit URLs resolve to `:4001` instead of `localhost:3000`, the auth mail
   rewrite contract regressed
 - if admin-web cannot reuse the verified owner session, the shared localhost
-  cookie/session path regressed
+  cookie/session path regressed, or the subdomain-backed environment is missing
+  `BETTER_AUTH_COOKIE_DOMAIN`
 - if `/api/auth/*`, `/api/public/*`, or `/api/internal/*` return the frontend
   router's `Not Found` output, the same-origin server routes regressed
 

@@ -21,6 +21,10 @@
   organization, and invitation system for the product
 - `apps/customer-web` and `apps/admin-web` proxy `/api/auth/*` and their
   backend API prefixes through same-origin TanStack Start server routes
+- when the product runs behind sibling subdomains such as
+  `customer.firapps.platform.localhost` and `admin.firapps.platform.localhost`,
+  `apps/internal-api` may receive `BETTER_AUTH_COOKIE_DOMAIN` so Better Auth
+  can share one session across those product subdomains
 - `packages/ui`, `packages/backend-common`, and `packages/db` are real shared
   runtime packages for those apps
 - `Tiltfile` plus `dev/k8s/` are the current local-only in-cluster backend

@@ -18,6 +18,19 @@ import {
 
 const allowedOrigins = listAllowedOrigins();
 const mailTransport = createMailTransport(readMailEnv());
+const advancedOptions = {
+  database: {
+    generateId: "uuid" as const,
+  },
+  ...(internalApiEnv.BETTER_AUTH_COOKIE_DOMAIN
+    ? {
+        crossSubDomainCookies: {
+          enabled: true,
+          domain: internalApiEnv.BETTER_AUTH_COOKIE_DOMAIN,
+        },
+      }
+    : {}),
+};
 
 function deliverMail(promise: Promise<void>) {
   promise.catch((error) => {
@@ -27,11 +40,7 @@ function deliverMail(promise: Promise<void>) {
 
 export const auth = betterAuth({
   appName: "firapps",
-  advanced: {
-    database: {
-      generateId: "uuid",
-    },
-  },
+  advanced: advancedOptions,
   baseURL: internalApiEnv.AUTH_BASE_URL,
   secret: internalApiEnv.BETTER_AUTH_SECRET,
   trustedOrigins: allowedOrigins,
