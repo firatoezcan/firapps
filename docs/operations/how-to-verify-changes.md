@@ -192,11 +192,17 @@ Commands:
 
 ```bash
 kubectl --context kind-platform delete namespace firapps-dev --ignore-not-found --wait=true
-tilt ci --timeout 15m
+tilt up --context kind-platform
+```
+
+While `tilt up` is still running in that shell, verify the live dev loop from a
+second shell:
+
+```bash
 kubectl --context kind-platform -n firapps-dev get cluster.postgresql.cnpg.io,deploy,svc,pods
 curl -fsS http://127.0.0.1:4000/readyz
 curl -fsS http://127.0.0.1:4001/readyz
-tilt down
+tilt down --context kind-platform
 ```
 
 Expected signal:
@@ -207,8 +213,9 @@ Expected signal:
   `Deployment/public-api`, and `Deployment/internal-api`
 - the CNPG cluster reaches `readyInstances=1`
 - both backend Deployments reach Ready
-- the Tilt-configured port-forwards expose `public-api` on `127.0.0.1:4000`
-  and `internal-api` on `127.0.0.1:4001`
+- while `tilt up --context kind-platform` is still running, the
+  Tilt-configured port-forwards expose `public-api` on `127.0.0.1:4000` and
+  `internal-api` on `127.0.0.1:4001`
 - both `/readyz` probes return `200`
 
 Failure interpretation:
@@ -217,6 +224,9 @@ Failure interpretation:
   in-cluster backend loop regressed
 - if the CNPG cluster does not become ready, the repo no longer supports the
   documented dev database topology
+- if the current kube context is not `kind-platform` and the operator does not
+  pass `--context kind-platform`, Tilt should refuse to run rather than deploy
+  to the wrong cluster
 - if the backend Deployments start but `/readyz` fails, the in-cluster runtime
   contract drifted from the documented service shape
 
