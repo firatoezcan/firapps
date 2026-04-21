@@ -6,6 +6,7 @@ This document explains the current structure of the repository.
 
 - `apps/` - runnable product applications
 - `packages/` - shared product code and repo-facing content packages
+- `dev/` - local-only in-cluster support assets for the product repo
 - `docs/` - current truth, contracts, verification, and reviews
 - `.agents/` - visible team topology and durable repo skills
 
@@ -13,22 +14,52 @@ This document explains the current structure of the repository.
 
 `apps/` contains user-facing product surfaces.
 
-### `apps/web/`
+### Current frontends
 
-- the first React + TypeScript application
-- built and served through Vite+ with `vp build` and `vp dev`
-- renders the current repo doctrine, boundary, and team model through shared
-  workspace data
+- `apps/customer-web/` is a TanStack Start frontend for the customer-facing
+  product surface
+- `apps/admin-web/` is a TanStack Start frontend for the admin-facing product
+  surface
+- both frontends consume `@firapps/ui` and default to local dev ports `3000`
+  and `3001`
+
+### Current backends
+
+- `apps/public-api/` is a Hono service for the public/customer-facing API
+- `apps/internal-api/` is a Hono service for the internal/ops-facing API
+- both backends consume `@firapps/backend-common` and `@firapps/db`
+- both backends own a Drizzle schema plus generated SQL migrations
+
+### Transitional bootstrap app
+
+- `apps/web/` is the earlier repo bootstrap app
+- it remains in the tree while the four-app product surface becomes the main
+  working shape
 
 ## `packages/`
 
 `packages/` contains shared code consumed by the apps.
 
-### `packages/foundation/`
+### Current shared product packages
 
-- shared repo identity data, review claims, and team cards used by `apps/web`
-- packaged with `vp pack`
-- tested with `vp test`
+- `packages/ui/` provides the shared shadcn/Tailwind component surface used by
+  the frontends
+- `packages/backend-common/` provides shared Hono, env, and `evlog` helpers for
+  the backends
+- `packages/db/` provides shared Drizzle/Postgres runtime and migration helpers
+
+### Transitional bootstrap package
+
+- `packages/foundation/` still supports `apps/web`
+- it remains a real package, not placeholder filler
+
+## `dev/`
+
+- `../Tiltfile` is the canonical local in-cluster backend loop
+- `dev/k8s/` contains the local-only namespace, CNPG cluster, and backend
+  workload manifests that Tilt applies on `kind-platform`
+- this tree is developer support material for `firapps`, not the platform
+  deployment truth for shared environments
 
 ## `docs/`
 
@@ -48,4 +79,7 @@ This document explains the current structure of the repository.
 ## Why this shape matters
 
 The layout keeps product code, truth docs, and delegation rules visible without
-turning the repository into an infrastructure control plane.
+turning the repository into an infrastructure control plane. The repo now owns
+multiple product runtimes, shared application code, and a local-only Tilt path,
+but still does not own the cluster-side deployment truth for shared
+environments.

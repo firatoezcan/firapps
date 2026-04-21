@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -19,3 +22,185 @@ jobs:
       - run: vp check
       - run: vp run -r test
       - run: vp run -r build
+
+  publish:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      REGISTRY_OWNER: firatoezcan
+      FIROPS_REPOSITORY_DISPATCH_TOKEN: ${{ secrets.FIROPS_REPOSITORY_DISPATCH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "${GITHUB_ENV}"
+          echo "VERSION_TAG=0.1.${GITHUB_RUN_NUMBER}" >> "${GITHUB_ENV}"
+
+      - name: Build and push customer-web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/customer-web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/firatoezcan/firapps-customer-web:${{ env.VERSION_TAG }}
+            ghcr.io/firatoezcan/firapps-customer-web:sha-${{ env.SHORT_SHA }}
+          build-args: |
+            VITE_PUBLIC_API_URL=http://public-api:4000/api/public
+
+      - name: Build and push admin-web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/admin-web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/firatoezcan/firapps-admin-web:${{ env.VERSION_TAG }}
+            ghcr.io/firatoezcan/firapps-admin-web:sha-${{ env.SHORT_SHA }}
+          build-args: |
+            VITE_INTERNAL_API_URL=http://internal-api:4001/api/internal
+
+      - name: Build and push public-api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/public-api/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/firatoezcan/firapps-public-api:${{ env.VERSION_TAG }}
+            ghcr.io/firatoezcan/firapps-public-api:sha-${{ env.SHORT_SHA }}
+
+      - name: Build and push internal-api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/internal-api/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/firatoezcan/firapps-internal-api:${{ env.VERSION_TAG }}
+            ghcr.io/firatoezcan/firapps-internal-api:sha-${{ env.SHORT_SHA }}
+
+      - name: Dispatch downstream image update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${FIROPS_REPOSITORY_DISPATCH_TOKEN}" ]]; then
+            echo "FIROPS_REPOSITORY_DISPATCH_TOKEN is required for repository_dispatch" >&2
+            exit 1
+          fi
+
+          payload="$(printf '{"event_type":"firapps-image-published","client_payload":{"source_repo":"%s","source_sha":"%s","source_run_number":"%s","images":{"customer-web":{"version":"ghcr.io/firatoezcan/firapps-customer-web:%s","sha":"ghcr.io/firatoezcan/firapps-customer-web:sha-%s"},"admin-web":{"version":"ghcr.io/firatoezcan/firapps-admin-web:%s","sha":"ghcr.io/firatoezcan/firapps-admin-web:sha-%s"},"public-api":{"version":"ghcr.io/firatoezcan/firapps-public-api:%s","sha":"ghcr.io/firatoezcan/firapps-public-api:sha-%s"},"internal-api":{"version":"ghcr.io/firatoezcan/firapps-internal-api:%s","sha":"ghcr.io/firatoezcan/firapps-internal-api:sha-%s"}}}}' \
+            "${GITHUB_REPOSITORY}" \
+            "${GITHUB_SHA}" \
+            "${GITHUB_RUN_NUMBER}" \
+            "${VERSION_TAG}" \
+            "${SHORT_SHA}" \
+            "${VERSION_TAG}" \
+            "${SHORT_SHA}" \
+            "${VERSION_TAG}" \
+            "${SHORT_SHA}" \
+            "${VERSION_TAG}" \
+            "${SHORT_SHA}")"
+
+          curl -fsS \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${FIROPS_REPOSITORY_DISPATCH_TOKEN}" \
+            https://api.github.com/repos/firatoezcan/firops/dispatches \
+            -d "${payload}"
+      - run: vp run public-api#migrate:generate
+      - run: vp run internal-api#migrate:generate
+      - run: git diff --exit-code -- apps/public-api/drizzle apps/internal-api/drizzle
+
+  backend-runtime-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: firapps
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d firapps"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp run db#build
+      - run: vp run backend-common#build
+      - run: vp run public-api#build
+      - run: vp run internal-api#build
+      - name: Start public-api
+        run: |
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/firapps' \
+          RUN_MIGRATIONS_ON_BOOT=true \
+          node apps/public-api/dist/index.js > /tmp/public-api.log 2>&1 &
+          echo $! > /tmp/public-api.pid
+      - name: Start internal-api
+        run: |
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/firapps' \
+          RUN_MIGRATIONS_ON_BOOT=true \
+          node apps/internal-api/dist/index.js > /tmp/internal-api.log 2>&1 &
+          echo $! > /tmp/internal-api.pid
+      - name: Probe public-api
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4000/readyz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:4000/healthz
+          curl -fsS http://127.0.0.1:4000/readyz
+          curl -fsS http://127.0.0.1:4000/api/public/products
+          curl -fsS http://127.0.0.1:4000/api/public/announcements
+      - name: Probe internal-api
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4001/readyz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:4001/healthz
+          curl -fsS http://127.0.0.1:4001/readyz
+          curl -fsS http://127.0.0.1:4001/api/auth/get-session
+          test "$(curl -s -o /tmp/internal-tenants.out -w '%{http_code}' http://127.0.0.1:4001/api/internal/tenants)" = "401"
+          test "$(curl -s -o /tmp/internal-deployments.out -w '%{http_code}' http://127.0.0.1:4001/api/internal/deployments)" = "401"
+      - name: Stop backend services
+        if: always()
+        run: |
+          kill "$(cat /tmp/public-api.pid)" "$(cat /tmp/internal-api.pid)" 2>/dev/null || true
+      - name: Upload backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-runtime-logs
+          path: |
+            /tmp/public-api.log
+            /tmp/internal-api.log

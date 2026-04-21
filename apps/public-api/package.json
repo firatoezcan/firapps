@@ -1,0 +1,29 @@
+{
+  "name": "public-api",
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/migrate.ts",
+    "migrate:generate": "drizzle-kit generate",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@firapps/backend-common": "workspace:*",
+    "@firapps/db": "workspace:*",
+    "@hono/node-server": "catalog:",
+    "drizzle-orm": "catalog:",
+    "evlog": "catalog:",
+    "hono": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "drizzle-kit": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -35,6 +35,55 @@ Turn `firapps` from the current Vite+ starter into a real product monorepo that 
 - `evlog` logging
 - no tracing in this pass
 
+## Locked architecture
+
+### Top-level shape
+
+- `apps/` - every deployable runtime surface in this repo
+- `packages/` - shared UI, backend, and database code
+- `dev/` - local-only developer support assets such as Tilt and Kubernetes manifests
+- `docs/` - contracts, verification, and reviewer truth
+- `.agents/` - explicit team topology and durable repo skills
+
+### Deployable apps
+
+- `apps/customer-web` - TanStack Start frontend
+- `apps/admin-web` - TanStack Start frontend
+- `apps/public-api` - Hono backend
+- `apps/internal-api` - Hono backend
+
+### Shared packages
+
+- `packages/ui` - shared shadcn-based UI package
+- `packages/backend-common` - env parsing, `evlog`, Hono middleware, health/readiness helpers
+- `packages/db` - Drizzle + Postgres runtime helpers, migration helpers, shared database primitives
+
+### Runtime decisions
+
+- keep all deployable surfaces under `apps/`; do not introduce a separate `services/` top-level
+- use a top-level `dev/` directory for Tilt and local Kubernetes support assets instead of burying them inside `apps/`
+- frontends are TanStack Start Node deployables, not static-only bundles
+- Hono backends use the Node adapter
+- Drizzle uses generated SQL migrations with the `node-postgres` driver
+- first-pass database topology is one CNPG cluster plus one application database plus separate PostgreSQL schemas per backend
+- runtime migrations must be explicit and reusable so the same image can be used for normal startup and for one-shot migration execution from `firops`
+
+### Database recommendation for `firops`
+
+Collapse the current ambiguity in favor of:
+
+- one CNPG cluster
+- one shared application database
+- one PostgreSQL schema per backend
+
+Why this is the firapps-side recommendation:
+
+- it matches the current Drizzle layout and migration helpers
+- it keeps local CNPG bootstrap simpler for the Tilt/dev path
+- it still gives each backend a clear ownership boundary through separate schemas and migration tables
+
+Do not document a separate database+role per backend in `firops` unless the firapps runtime and docs are deliberately changed to match.
+
 ## Boundary decisions already made
 
 - `firapps` remains a product repo, not a platform/GitOps repo
@@ -57,6 +106,38 @@ When this task is complete:
 6. GitHub Actions publishes deployable images from `firapps`
 7. Renovate can raise PRs in `firops` to update the published image tags
 8. Flux in `firops` can reconcile those updates
+
+## File-level target structure
+
+```text
+firapps/
+  apps/
+    customer-web/
+    admin-web/
+    public-api/
+    internal-api/
+  packages/
+    ui/
+    backend-common/
+    db/
+  dev/
+    k8s/
+    tilt/
+  docs/
+  .agents/
+  TASK.md
+```
+
+## Acceptance criteria
+
+- `vp` remains the canonical repo front door for install, check, test, build, and app task execution
+- both TanStack Start frontends build and have truthful `vp run <app>#dev` paths
+- both Hono backends build, start, and connect to Postgres through `packages/db`
+- each backend has generated SQL migrations and an explicit runtime migration path
+- local Tilt can bring up the backend loop inside Kubernetes against a single-replica CNPG cluster
+- the dev-only Kubernetes/Tilt assets are clearly documented as local support material, not GitOps ownership
+- GitHub Actions proves the documented repo checks and publishes immutable GHCR images for each deployable app
+- the published image naming/versioning is stable enough for downstream Renovate consumption from `firops`
 
 ## Required loops
 

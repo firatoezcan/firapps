@@ -9,18 +9,38 @@
 - `vp check`
 - `vp run -r test`
 - `vp run -r build`
-- `vp run web#dev`
+- `vp run internal-api#auth:generate`
+- `vp run customer-web#dev`
+- `vp run admin-web#dev`
+- `vp run public-api#dev`
+- `vp run internal-api#dev`
+- `tilt up`
+- `tilt ci`
 
 ## Current truth
 
 - repo-wide workflow configuration lives in the root `vite.config.ts`
 - staged-file checks are defined in `vite.config.ts` and executed through
   `vp staged`
-- the first app keeps its framework plugin configuration in
-  `apps/web/vite.config.ts`
+- the TanStack Start frontends keep their framework plugin configuration in
+  `apps/customer-web/vite.config.ts` and `apps/admin-web/vite.config.ts`
+- the TanStack Start frontends own same-origin server routes for `/api/auth/*`
+  and their backend API prefixes, so browser verification does not depend on a
+  Vite-only proxy layer
+- the Hono backends keep their runtime entrypoints under
+  `apps/public-api/src/index.ts` and `apps/internal-api/src/index.ts`, but are
+  still run through `vp run <app>#...`
+- Drizzle migration generation lives beside each backend through
+  `apps/*/drizzle.config.ts`
+- Better Auth schema generation for `internal-api` lives beside the service as
+  `vp run internal-api#auth:generate`
 - shared packages build through `vp pack`, not an ad hoc bundler script
+- `Tiltfile` is the canonical local in-cluster backend loop and consumes the
+  local-only manifests under `dev/k8s/`
 - CI uses `voidzero-dev/setup-vp` and runs the same commands documented for
   local verification
+- image publication uses `.github/workflows/ci.yml` for the automatic `main`
+  path and `.github/workflows/images.yml` for manual branch image pushes
 
 ## Hook posture
 
@@ -33,4 +53,5 @@
 
 - package-manager-first documentation
 - plain `vite` CLI as the documented front door
+- per-app `npm install` / `npm run` instructions as canonical docs
 - duplicate formatter or linter entrypoint tools as the main repo contract
