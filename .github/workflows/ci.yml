@@ -33,6 +33,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       REGISTRY_OWNER: firatoezcan
+      OCI_SOURCE: https://github.com/${{ github.repository }}
       FIROPS_REPOSITORY_DISPATCH_TOKEN: ${{ secrets.FIROPS_REPOSITORY_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +59,10 @@ jobs:
           context: .
           file: apps/customer-web/Dockerfile
           push: true
+          labels: |
+            org.opencontainers.image.source=${{ env.OCI_SOURCE }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=customer-web
           tags: |
             ghcr.io/firatoezcan/firapps-customer-web:${{ env.VERSION_TAG }}
             ghcr.io/firatoezcan/firapps-customer-web:sha-${{ env.SHORT_SHA }}
@@ -70,6 +75,10 @@ jobs:
           context: .
           file: apps/admin-web/Dockerfile
           push: true
+          labels: |
+            org.opencontainers.image.source=${{ env.OCI_SOURCE }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=admin-web
           tags: |
             ghcr.io/firatoezcan/firapps-admin-web:${{ env.VERSION_TAG }}
             ghcr.io/firatoezcan/firapps-admin-web:sha-${{ env.SHORT_SHA }}
@@ -82,6 +91,10 @@ jobs:
           context: .
           file: apps/public-api/Dockerfile
           push: true
+          labels: |
+            org.opencontainers.image.source=${{ env.OCI_SOURCE }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=public-api
           tags: |
             ghcr.io/firatoezcan/firapps-public-api:${{ env.VERSION_TAG }}
             ghcr.io/firatoezcan/firapps-public-api:sha-${{ env.SHORT_SHA }}
@@ -92,6 +105,10 @@ jobs:
           context: .
           file: apps/internal-api/Dockerfile
           push: true
+          labels: |
+            org.opencontainers.image.source=${{ env.OCI_SOURCE }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=internal-api
           tags: |
             ghcr.io/firatoezcan/firapps-internal-api:${{ env.VERSION_TAG }}
             ghcr.io/firatoezcan/firapps-internal-api:sha-${{ env.SHORT_SHA }}

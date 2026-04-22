@@ -249,6 +249,10 @@ git rev-parse HEAD
 gh workflow run images.yml --ref <branch-name> -f push=true
 gh run list --workflow images.yml --branch <branch-name> --limit 1
 gh run watch --exit-status "$(gh run list --workflow images.yml --branch <branch-name> --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh api /users/firatoezcan/packages/container/firapps-customer-web --jq '.repository.full_name'
+gh api /users/firatoezcan/packages/container/firapps-admin-web --jq '.repository.full_name'
+gh api /users/firatoezcan/packages/container/firapps-public-api --jq '.repository.full_name'
+gh api /users/firatoezcan/packages/container/firapps-internal-api --jq '.repository.full_name'
 docker manifest inspect ghcr.io/firatoezcan/firapps-customer-web:sha-$(git rev-parse HEAD)
 docker manifest inspect ghcr.io/firatoezcan/firapps-admin-web:sha-$(git rev-parse HEAD)
 docker manifest inspect ghcr.io/firatoezcan/firapps-public-api:sha-$(git rev-parse HEAD)
@@ -258,6 +262,7 @@ docker manifest inspect ghcr.io/firatoezcan/firapps-internal-api:sha-$(git rev-p
 Expected signal:
 
 - the manual `images.yml` run completes successfully for the current branch
+- each GHCR package reports `firatoezcan/firapps` as its linked repository
 - each deployable surface produces a pullable GHCR image tagged with the full
   commit SHA
 - the committed `ci.yml` remains the automatic `main` publish path and carries
@@ -267,6 +272,9 @@ Failure interpretation:
 
 - if the workflow cannot be triggered or cannot push packages, the branch-level
   GHCR publication path is not usable yet
+- if any package returns `null` for `.repository.full_name`, the GHCR package
+  is no longer linked to `firatoezcan/firapps` and `GITHUB_TOKEN` publication
+  on `main` is at risk
 - if any manifest inspect fails, the documented image publication contract is
   ahead of reality
 - if the publish workflow no longer exposes `firapps-image-published`, the

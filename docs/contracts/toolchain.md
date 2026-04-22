@@ -41,6 +41,10 @@
   local verification
 - image publication uses `.github/workflows/ci.yml` for the automatic `main`
   path and `.github/workflows/images.yml` for manual branch image pushes
+- deployable Docker images carry
+  `org.opencontainers.image.source=https://github.com/firatoezcan/firapps` so
+  GHCR packages stay linked to the repo and keep working with
+  `GITHUB_TOKEN`-based publication
 
 ## Hook posture
 
