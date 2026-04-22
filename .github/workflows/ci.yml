@@ -37,6 +37,11 @@ jobs:
       FIROPS_REPOSITORY_DISPATCH_TOKEN: ${{ secrets.FIROPS_REPOSITORY_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install --frozen-lockfile
 
       - uses: docker/setup-buildx-action@v3
 
