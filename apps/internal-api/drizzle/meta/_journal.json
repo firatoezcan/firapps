@@ -22,6 +22,27 @@
       "when": 1776804165204,
       "tag": "0002_organic_bushwacker",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776845428367,
+      "tag": "0003_soft_odin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776856599894,
+      "tag": "0004_tidy_phil_sheldon",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1776860792410,
+      "tag": "0005_typical_centennial",
+      "breakpoints": true
     }
   ]
 }

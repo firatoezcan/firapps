@@ -19,12 +19,68 @@
 - `apps/public-api` and `apps/internal-api` are the current backend surfaces
 - Better Auth in `apps/internal-api` is the canonical auth, session,
   organization, and invitation system for the product
+- `apps/internal-api` now also owns the first product control-plane slice for
+  org-scoped projects, GitHub-first repository registration validation,
+  Blueprint templates, dispatch records, run records, run steps, run
+  artifacts, workspace metadata, overview state, activity feeds, richer
+  GitHub pull-request metadata, and the founder/operator allowlist boundary
 - `apps/customer-web` and `apps/admin-web` proxy `/api/auth/*` and their
   backend API prefixes through same-origin TanStack Start server routes
+- `apps/admin-web` and `apps/customer-web` now expose route-level run-detail
+  drill-down from `/runs` into `/runs/$runId`, backed by the existing
+  `/api/internal/runs/:runId` contract; customer-web still gates that detail
+  page to member-visible runs before opening it
+- `apps/customer-web` organization routing is now member-assigned-work first:
+  assigned runs, assigned projects, pull requests, and ready devboxes lead the
+  route, while owner/admin sessions still retain the wider roster, project,
+  and organization-devbox visibility below
+- `apps/customer-web` home is now a member dashboard first: runs, pull
+  requests, next action, recent run/devbox state, and project context lead the
+  route, while auth, invitations, and public updates remain secondary support
+  surfaces on the same page; zero-project and zero-run founder states now hand
+  straight back into admin project, Blueprint, and run setup instead of
+  generic dead ends
+- `apps/customer-web` `/sign-up-complete` no longer ends at a passive
+  verification success card; once the first organization exists it now points
+  founders directly into admin project setup while still allowing them to
+  continue into the customer workspace
+- `apps/admin-web` now exposes both manual dispatch and a product-side
+  Slack-style sidechannel dispatch form on `/runs`, so the local MVP no longer
+  relies on a raw proof-script fetch alone to exercise that path
+- `apps/admin-web` now behaves like a route-level control plane instead of a
+  mixed landing page: signed-in org contexts flow into `/control-plane`,
+  `/queue` reads a dedicated `/api/internal/queue` snapshot, `/operators`
+  forwards the richer provisioner runtime snapshot, `/control-plane` carries a
+  concrete first-project -> Blueprint -> run -> review setup sequence, and
+  signed-out deep links on core control-plane routes hand users back through
+  the Better Auth customer sign-in path
 - when the product runs behind sibling subdomains such as
   `customer.firapps.platform.localhost` and `admin.firapps.platform.localhost`,
   `apps/internal-api` may receive `BETTER_AUTH_COOKIE_DOMAIN` so Better Auth
   can share one session across those product subdomains
+- org-scoped projects currently persist in the `organization_tenants` table and
+  remain additive beside the older seed/demo `tenants` and `deployments`
+  surfaces
+- the current local-first unattended-work control-plane path is additive and
+  honest: the repo now tracks projects, Blueprints, dispatches, runs, run
+  steps, and run artifacts; `internal-api` now prefers the workspace-published
+  Git branch/commit returned by the provisioner when the isolated devbox can
+  push successfully, falls back to the older report-publish branch path when it
+  cannot, and `/api/internal/pull-requests` enriches those rows with live
+  GitHub review/check metadata when a token is configured; the selected
+  Blueprint now feeds a concrete execution-plan section into the provisioner
+  report and downstream draft PR artifact instead of stopping at UI-only
+  metadata; run-linked devboxes
+  expose the actual workspace diff under the `execution_report_patch` artifact
+  instead of only the generated report-file delta, so run detail can review
+  the real repository mutation that was pushed;
+  are reclaimed after a short local retention window so repeated proof runs do
+  not exhaust the sandbox node forever, while the historical run detail keeps
+  the deleted workspace record; `/api/internal/queue` now centralizes queue
+  age, activity, and retry-facing run truth for admin-web; `/api/internal/operator`
+  now includes the provisioner runtime snapshot that powers the founder view;
+  the deeper devbox execution bridge still depends on the external
+  provisioner/runtime seam
 - `packages/ui`, `packages/backend-common`, and `packages/db` are real shared
   runtime packages for those apps
 - `Tiltfile` plus `dev/k8s/` are the current local-only in-cluster backend

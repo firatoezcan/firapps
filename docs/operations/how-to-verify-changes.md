@@ -83,7 +83,14 @@ curl http://localhost:4001/healthz
 curl http://localhost:4001/api/auth/get-session
 curl -i http://localhost:4001/api/internal/tenants
 curl -i http://localhost:4001/api/internal/deployments
+curl -i http://localhost:4001/api/internal/projects
+curl -i http://localhost:4001/api/internal/blueprints
+curl -i http://localhost:4001/api/internal/dispatches
+curl -i http://localhost:4001/api/internal/overview
+curl -i http://localhost:4001/api/internal/runs
+curl -i http://localhost:4001/api/internal/activity
 docker exec firapps-pg psql -U postgres -d firapps -c "select table_schema, table_name from information_schema.tables where table_schema in ('catalog','operations') order by table_schema, table_name;"
+docker exec firapps-pg psql -U postgres -d firapps -c "select slug, scope from operations.blueprints order by slug;"
 ```
 
 Expected signal:
@@ -95,10 +102,29 @@ Expected signal:
 - `GET /api/auth/get-session` returns `null` before a browser session exists
 - the internal API returns `401` for `/api/internal/tenants` and
   `/api/internal/deployments` before Better Auth login
+- the new protected control-plane endpoints also return `401` before Better
+  Auth login:
+  - `/api/internal/projects`
+  - `/api/internal/blueprints`
+  - `/api/internal/dispatches`
+  - `/api/internal/overview`
+  - `/api/internal/runs`
+  - `/api/internal/activity`
+- active run records with a provisioned workspace continue advancing from
+  `provisioning` to `workspace_ready`, `completed`, or `failed` without a UI
+  page needing to fetch `/api/internal/runs`
 - the backing Postgres instance contains `catalog.*` tables plus Better Auth
   and internal runtime tables in `operations.*`, including `users`,
   `sessions`, `accounts`, `verifications`, `organizations`,
-  `organization_memberships`, and `organization_invitations`
+  `organization_memberships`, `organization_invitations`,
+  `organization_tenants`, `organization_workspaces`, `blueprints`,
+  `dispatches`, `runs`, `run_steps`, and `run_artifacts`
+- project creation with repository settings now validates the GitHub
+  repository and requested default branch against the configured GitHub token,
+  so a missing or invalid `GITHUB_TOKEN` will surface at project-registration
+  time instead of much later in the PR path
+- the startup seed path inserts at least the system Blueprints `ticket-to-pr`
+  and `backlog-bugfix`
 
 Failure interpretation:
 
@@ -109,22 +135,64 @@ Failure interpretation:
   seeding path regressed
 - if `/api/internal/*` stops returning `401` before login, the protected
   internal-api boundary regressed
+- if project registration accepts arbitrary GitHub coordinates without
+  validation, the repo-registration contract drifted away from the current
+  GitHub-first MVP truth
+- if active runs only advance after someone reads `/api/internal/runs`, the
+  server-side run reconciliation loop regressed
 - if the expected schemas/tables are missing, the shared database ownership
   model is no longer what the repo claims
+- if the system Blueprint rows do not exist after startup, the product
+  control-plane seed path regressed
 
 ## 4. Better Auth browser and proxy sweep
 
-**Verification class:** browser-smoke
+**Verification class:** browser-smoke + external-fixture
 
 ### How to verify this
+
+Prerequisites:
+
+- the configured `GITHUB_TOKEN` can validate the target repository and open a
+  branch plus draft PR against it
+- if the sidechannel dispatch proof should use anything other than the default
+  local secret, set `FIRAPPS_DISPATCH_WEBHOOK_SECRET` before running the script
+- if the run should prove the preferred workspace-push lane instead of the
+  older report-publish fallback, the execution bridge also needs Git
+  write credentials inside the provisioner-backed devbox
+- the default writable fixture in the current environment is
+  `firatoezcan/firops-test-workspace@main`; override it with
+  `FIRAPPS_E2E_REPO_OWNER`, `FIRAPPS_E2E_REPO_NAME`, and
+  `FIRAPPS_E2E_REPO_BRANCH` if you need a different writable fixture
 
 Commands:
 
 ```bash
 vp run customer-web#dev
 vp run admin-web#dev
+FIRAPPS_E2E_REPO_OWNER=firatoezcan \
+FIRAPPS_E2E_REPO_NAME=firops-test-workspace \
+FIRAPPS_E2E_REPO_BRANCH=main \
 node docs/verification/scripts/better-auth-local-e2e.mjs
 ```
+
+To capture the same user stories as reviewable Playwright videos instead of
+only a terminal proof, run the dedicated recorder against the same local
+frontends:
+
+```bash
+CUSTOMER_WEB_URL=http://127.0.0.1:13000 \
+ADMIN_WEB_URL=http://127.0.0.1:13001 \
+MAILPIT_API_URL=http://127.0.0.1:18025/api/v1 \
+FIRAPPS_E2E_REPO_OWNER=firatoezcan \
+FIRAPPS_E2E_REPO_NAME=firops-test-workspace \
+FIRAPPS_E2E_REPO_BRANCH=main \
+node docs/verification/scripts/record-user-story-videos.mjs
+```
+
+Override `FIRAPPS_STORY_VIDEO_DIR` if the generated `.webm` chapters and
+manifest should land somewhere other than
+`state/verification/story-videos/run-<timestamp>/`.
 
 If you need to run the frontends on non-default ports for a cluster-backed
 proof, keep the server-side fallback origins aligned:
@@ -132,6 +200,7 @@ proof, keep the server-side fallback origins aligned:
 ```bash
 CUSTOMER_WEB_URL=http://127.0.0.1:13000 \
 VITE_PUBLIC_API_URL=http://127.0.0.1:14000/api/public \
+VITE_INTERNAL_API_URL=http://127.0.0.1:14001/api/internal \
 AUTH_PROXY_TARGET=http://127.0.0.1:14001/api/auth \
 vp run customer-web#dev -- --host 127.0.0.1 --port 13000
 ADMIN_WEB_URL=http://127.0.0.1:13001 \
@@ -141,15 +210,22 @@ vp run admin-web#dev -- --host 127.0.0.1 --port 13001
 CUSTOMER_WEB_URL=http://127.0.0.1:13000 \
 ADMIN_WEB_URL=http://127.0.0.1:13001 \
 MAILPIT_API_URL=http://127.0.0.1:18025/api/v1 \
+FIRAPPS_E2E_REPO_OWNER=firatoezcan \
+FIRAPPS_E2E_REPO_NAME=firops-test-workspace \
+FIRAPPS_E2E_REPO_BRANCH=main \
 node docs/verification/scripts/better-auth-local-e2e.mjs
 ```
 
 Expected signal:
 
-- the script prints fresh owner/invitee emails, rewritten Mailpit links on
-  `http://localhost:3000`, and `PLAYWRIGHT_BETTER_AUTH_E2E_OK`
+- the script prints fresh owner/invitee emails, the writable fixture repo,
+  rewritten Mailpit links on `http://localhost:3000`, and
+  `PLAYWRIGHT_BETTER_AUTH_E2E_OK`
 - owner sign-up completes through customer-web, verifies through Mailpit, and
   creates the first organization
+- the verified-owner `/sign-up-complete` page now shows the founder handoff
+  into admin project setup, and customer `/` shows the same first-project CTA
+  when the account has no registered projects yet
 - the Better Auth session created on `localhost` is reused by admin-web on
   `http://localhost:3001`
 - admin-web can create an invitation, customer-web can create and verify the
@@ -159,6 +235,62 @@ Expected signal:
 - the frontends serve `/api/auth/*`, `/api/public/*`, and `/api/internal/*`
   through their same-origin TanStack Start server routes instead of returning a
   TanStack `Not Found` page
+- the admin route-level SaaS surfaces for `/projects`, `/control-plane`,
+  `/queue`, `/pull-requests`, `/billing`, `/activity`, and `/devboxes` all
+  render against the same Better Auth session and current internal-api
+  contract during the same browser proof, including the queue capacity
+  snapshot, the control-plane setup sequence cards, and PR review-attention
+  cues
+- the browser proof saves the created project's default Blueprint from
+  `/projects`, then exercises both dispatch entrypoints from the product UI:
+  a normal in-product run submission and the Slack-style sidechannel form on
+  admin `/runs`
+- the browser proof edits an org-scoped Blueprint on `/blueprints`, archives
+  it, reactivates it from the same page-session list, and uses the
+  Blueprint-to-Run handoff so `/runs` opens with the selected project and
+  reactivated Blueprint already preselected; the selected Blueprint now also
+  feeds an execution-plan section into the provisioner-generated run report
+  artifact
+- the admin `/runs` page links directly into `/runs/$runId`, and that detail
+  route renders the real run summary, outcome-and-next-action state, steps,
+  artifacts, workspace/devbox information, and recent run events from
+  `/api/internal/runs/:runId`
+- the admin `/members` route creates a second pending invitation, resends it,
+  and cancels it, while the main invitee still completes the full Better Auth
+  accept-and-reset flow
+- the admin `/devboxes` route can create a manual devbox against the selected
+  project and delete that same devbox again during the same proof
+- the billing route no longer only renders read-only placeholder fields during
+  proof; the script updates and saves a billing placeholder for the created
+  project and sees the success state in-browser
+- the customer `/runs` page also links directly into `/runs/$runId`, and that
+  detail route renders the same run fields while preserving the current
+  member-scoped visibility rule through the explicit backend filter
+  `requestedBy=self` before loading detail
+- the customer route-level surfaces for `/runs`, `/pull-requests`,
+  `/invitations`, `/organization`, and `/account` all render during the same
+  proof, and customer `/` still exposes the member dashboard emphasis through
+  "My work hub" plus "Next best action" while the invitee member does not
+  receive the owner's run-detail or PR links on the member-scoped customer
+  routes
+- the invited non-founder member can still inspect the organization-level run
+  and pull-request surfaces in admin-web, while founder-only `/operators`
+  remains denied for that same session
+- the dedicated recorder writes per-story `.webm` chapters, one README index,
+  one JSON manifest, and per-actor browser-state snapshots under
+  `state/verification/story-videos/run-<timestamp>/`, with visible "NEXT
+  ACTION" overlays before each highlighted click or form submission so the
+  intended interaction is clear in the videos before it happens
+- the run dispatched during the proof advances far enough that the
+  `/pull-requests` route shows a real `Open PR` link plus the enriched GitHub
+  metadata that `internal-api` can read for the created project instead of
+  only an empty state
+- the admin `/runs/$runId` detail route exposes an `execution_report_patch`
+  artifact whose diff contains the README mutation requested by the proof,
+  including the exact `firapps-e2e-run-<runId>` marker line on the published
+  workspace branch
+- the allowlisted founder/operator account can open `/operators`, while the
+  invited non-allowlisted member is denied on that same route
 - for subdomain-backed proofs such as `customer.firapps.platform.localhost`
   plus `admin.firapps.platform.localhost`, `internal-api` must run with
   `BETTER_AUTH_COOKIE_DOMAIN` set to the shared parent domain so the owner
@@ -175,6 +307,48 @@ Failure interpretation:
   `BETTER_AUTH_COOKIE_DOMAIN`
 - if `/api/auth/*`, `/api/public/*`, or `/api/internal/*` return the frontend
   router's `Not Found` output, the same-origin server routes regressed
+- if the route-level admin surfaces do not render the created project, run, or
+  billing data during the browser proof, either the admin route wiring or the
+  internal-api read surface regressed
+- if the route-level customer surfaces no longer render the owner session,
+  member-scoped run data, organization/project context, or account state, the
+  customer route wiring regressed
+- if the Slack-style sidechannel form on admin `/runs` no longer produces a
+  visible second run, the product-side sidechannel dispatch boundary regressed
+- if `/blueprints` can no longer edit, archive, reactivate, or hand off the
+  selected project-plus-Blueprint into `/runs`, the admin Blueprint lifecycle
+  or run-composer handoff contract regressed
+- if either `/runs/$runId` detail route stops rendering the persisted run
+  summary, steps, artifacts, workspace, or event stream, the run-detail
+  frontend contract regressed
+- if `/members` can no longer resend and cancel a still-pending invitation
+  without breaking the accepted-member path, the admin invitation-lifecycle
+  contract regressed
+- if `/devboxes` can no longer create and then delete a manual devbox record
+  for the selected project, the admin devbox lifecycle contract regressed
+- if the invitee can see the owner's customer run-detail or PR links, the
+  backend `requestedBy=self` member-scoping contract regressed
+- if the invitee can no longer inspect org-level admin `/runs` or
+  `/pull-requests` while founder-only `/operators` remains denied, the
+  reviewer/member inspection contract regressed
+- if the founder can no longer reach `/operators` or the invitee is no longer
+  denied there, the operator allowlist boundary regressed
+- if the browser proof reaches run dispatch but `/pull-requests` never shows a
+  real `Open PR` link with GitHub-side metadata, either the writable GitHub
+  fixture path regressed or the run-to-branch/PR contract is no longer working
+- if repeated browser-proof reruns start leaving new runs stuck in
+  `provisioning` while the sandbox scheduler reports insufficient CPU on the
+  `workspace-ide-ready` node, the run-workspace retention cleanup regressed and
+  old proof-created devboxes are no longer being reclaimed
+- if the writable GitHub fixture PR contains `.ssh/ssh_host_*` files, the
+  workspace runtime is leaking daemon state into the repo-backed branch and
+  the devbox execution contract regressed
+- if the run detail route still shows only the generated report-file diff under
+  `execution_report_patch` and no README marker line, the execution-bridge
+  artifact contract regressed even if the PR itself was opened
+- if the run detail route stops showing the `workspace_push_*` artifacts or no
+  longer distinguishes a published workspace branch from the report-publish
+  fallback, the execution-bridge publication contract regressed
 
 ## 5. Tilt and dev CNPG backend loop
 

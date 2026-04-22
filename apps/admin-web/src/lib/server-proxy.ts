@@ -15,8 +15,21 @@ function normalizeTargetBaseUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
+function resolveForwardedAuthOrigin(request: Request) {
+  const configuredOrigin = process.env.ADMIN_AUTH_FORWARD_ORIGIN?.replace(/\/+$/, "");
+  const requestUrl = new URL(request.url);
+  const forwardedOrigin = configuredOrigin ?? request.headers.get("origin") ?? requestUrl.origin;
+
+  try {
+    return new URL(forwardedOrigin).origin;
+  } catch {
+    return requestUrl.origin;
+  }
+}
+
 function buildForwardHeaders(request: Request) {
   const requestUrl = new URL(request.url);
+  const forwardedAuthOrigin = resolveForwardedAuthOrigin(request);
   const headers = new Headers(request.headers);
 
   for (const headerName of hopByHopHeaders) {
@@ -25,6 +38,11 @@ function buildForwardHeaders(request: Request) {
 
   headers.set("x-forwarded-host", requestUrl.host);
   headers.set("x-forwarded-proto", requestUrl.protocol.replace(":", ""));
+  headers.set("origin", forwardedAuthOrigin);
+  headers.set("referer", `${forwardedAuthOrigin}/`);
+  headers.delete("sec-fetch-dest");
+  headers.delete("sec-fetch-mode");
+  headers.delete("sec-fetch-site");
 
   return headers;
 }
@@ -67,4 +85,32 @@ export async function proxyRequestToTarget(
 
 export function readProxyTarget(envName: string, fallbackUrl: string) {
   return process.env[envName] ?? fallbackUrl;
+}
+
+export function readInternalApiProxyTarget(envName: string, fallbackUrl: string) {
+  const explicitTarget = process.env[envName];
+
+  if (explicitTarget) {
+    return explicitTarget;
+  }
+
+  const authProxyTarget = process.env.AUTH_PROXY_TARGET;
+
+  if (!authProxyTarget) {
+    return fallbackUrl;
+  }
+
+  try {
+    const derivedTarget = new URL(authProxyTarget);
+
+    derivedTarget.pathname = derivedTarget.pathname.replace(/\/api\/auth\/?$/, "/api/internal");
+
+    if (derivedTarget.pathname.includes("/api/internal")) {
+      return derivedTarget.toString();
+    }
+  } catch {
+    return fallbackUrl;
+  }
+
+  return fallbackUrl;
 }

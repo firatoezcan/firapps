@@ -9,5 +9,6 @@ Current command groups:
 - local hook configuration
 - backend migration, Better Auth, and API smoke
 - Better Auth browser and proxy verification
+- user-story video capture
 - local Tilt and CNPG backend verification
 - image publication and downstream-dispatch verification

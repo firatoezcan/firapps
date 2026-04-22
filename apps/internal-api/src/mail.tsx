@@ -91,7 +91,7 @@ function resolveCustomerRoute(
   try {
     const callbackTarget = new URL(callbackUrl, customerBase);
 
-    if (callbackTarget.origin !== customerBase.origin) {
+    if (!originsMatch(callbackTarget, customerBase)) {
       return new URL(fallbackPath, customerBase);
     }
 
@@ -99,6 +99,18 @@ function resolveCustomerRoute(
   } catch {
     return new URL(fallbackPath, customerBase);
   }
+}
+
+function isLoopbackHostname(hostname: string) {
+  return hostname === "127.0.0.1" || hostname === "localhost";
+}
+
+function originsMatch(actual: URL, expected: URL) {
+  const sameHost =
+    actual.hostname === expected.hostname ||
+    (isLoopbackHostname(actual.hostname) && isLoopbackHostname(expected.hostname));
+
+  return sameHost && actual.protocol === expected.protocol && actual.port === expected.port;
 }
 
 export function buildVerificationUrl(customerWebUrl: string, actionUrl: string) {

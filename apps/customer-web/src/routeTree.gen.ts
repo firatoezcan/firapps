@@ -13,12 +13,19 @@ import { Route as VerificationPendingRouteImport } from './routes/verification-p
 import { Route as SignUpCompleteRouteImport } from './routes/sign-up-complete'
 import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as RunsRouteImport } from './routes/runs'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as PostVerifyRouteImport } from './routes/post-verify'
+import { Route as OrganizationRouteImport } from './routes/organization'
+import { Route as InvitationsRouteImport } from './routes/invitations'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as AccountRouteImport } from './routes/account'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
 import { Route as ApiPublicSplatRouteImport } from './routes/api/public/$'
+import { Route as ApiInternalSplatRouteImport } from './routes/api/internal/$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const VerificationPendingRoute = VerificationPendingRouteImport.update({
@@ -41,9 +48,19 @@ const SignInRoute = SignInRouteImport.update({
   path: '/sign-in',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RunsRoute = RunsRouteImport.update({
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PullRequestsRoute = PullRequestsRouteImport.update({
+  id: '/pull-requests',
+  path: '/pull-requests',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PostVerifyRoute = PostVerifyRouteImport.update({
@@ -51,15 +68,35 @@ const PostVerifyRoute = PostVerifyRouteImport.update({
   path: '/post-verify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OrganizationRoute = OrganizationRouteImport.update({
+  id: '/organization',
+  path: '/organization',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InvitationsRoute = InvitationsRouteImport.update({
+  id: '/invitations',
+  path: '/invitations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const RunsRunIdRoute = RunsRunIdRouteImport.update({
+  id: '/$runId',
+  path: '/$runId',
+  getParentRoute: () => RunsRoute,
 } as any)
 const InviteInvitationIdRoute = InviteInvitationIdRouteImport.update({
   id: '/invite/$invitationId',
@@ -71,6 +108,11 @@ const ApiPublicSplatRoute = ApiPublicSplatRouteImport.update({
   path: '/api/public/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalSplatRoute = ApiInternalSplatRouteImport.update({
+  id: '/api/internal/$',
+  path: '/api/internal/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -79,97 +121,145 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/invitations': typeof InvitationsRoute
+  '/organization': typeof OrganizationRoute
   '/post-verify': typeof PostVerifyRoute
+  '/pull-requests': typeof PullRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/runs': typeof RunsRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/sign-up-complete': typeof SignUpCompleteRoute
   '/verification-pending': typeof VerificationPendingRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
+  '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/internal/$': typeof ApiInternalSplatRoute
   '/api/public/$': typeof ApiPublicSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/invitations': typeof InvitationsRoute
+  '/organization': typeof OrganizationRoute
   '/post-verify': typeof PostVerifyRoute
+  '/pull-requests': typeof PullRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/runs': typeof RunsRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/sign-up-complete': typeof SignUpCompleteRoute
   '/verification-pending': typeof VerificationPendingRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
+  '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/internal/$': typeof ApiInternalSplatRoute
   '/api/public/$': typeof ApiPublicSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/invitations': typeof InvitationsRoute
+  '/organization': typeof OrganizationRoute
   '/post-verify': typeof PostVerifyRoute
+  '/pull-requests': typeof PullRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/runs': typeof RunsRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/sign-up-complete': typeof SignUpCompleteRoute
   '/verification-pending': typeof VerificationPendingRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
+  '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/internal/$': typeof ApiInternalSplatRoute
   '/api/public/$': typeof ApiPublicSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/account'
     | '/forgot-password'
+    | '/invitations'
+    | '/organization'
     | '/post-verify'
+    | '/pull-requests'
     | '/reset-password'
+    | '/runs'
     | '/sign-in'
     | '/sign-up'
     | '/sign-up-complete'
     | '/verification-pending'
     | '/invite/$invitationId'
+    | '/runs/$runId'
     | '/api/auth/$'
+    | '/api/internal/$'
     | '/api/public/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/account'
     | '/forgot-password'
+    | '/invitations'
+    | '/organization'
     | '/post-verify'
+    | '/pull-requests'
     | '/reset-password'
+    | '/runs'
     | '/sign-in'
     | '/sign-up'
     | '/sign-up-complete'
     | '/verification-pending'
     | '/invite/$invitationId'
+    | '/runs/$runId'
     | '/api/auth/$'
+    | '/api/internal/$'
     | '/api/public/$'
   id:
     | '__root__'
     | '/'
+    | '/account'
     | '/forgot-password'
+    | '/invitations'
+    | '/organization'
     | '/post-verify'
+    | '/pull-requests'
     | '/reset-password'
+    | '/runs'
     | '/sign-in'
     | '/sign-up'
     | '/sign-up-complete'
     | '/verification-pending'
     | '/invite/$invitationId'
+    | '/runs/$runId'
     | '/api/auth/$'
+    | '/api/internal/$'
     | '/api/public/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
+  InvitationsRoute: typeof InvitationsRoute
+  OrganizationRoute: typeof OrganizationRoute
   PostVerifyRoute: typeof PostVerifyRoute
+  PullRequestsRoute: typeof PullRequestsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  RunsRoute: typeof RunsRouteWithChildren
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
   SignUpCompleteRoute: typeof SignUpCompleteRoute
   VerificationPendingRoute: typeof VerificationPendingRoute
   InviteInvitationIdRoute: typeof InviteInvitationIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiInternalSplatRoute: typeof ApiInternalSplatRoute
   ApiPublicSplatRoute: typeof ApiPublicSplatRoute
 }
 
@@ -203,11 +293,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignInRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/runs': {
+      id: '/runs'
+      path: '/runs'
+      fullPath: '/runs'
+      preLoaderRoute: typeof RunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reset-password': {
       id: '/reset-password'
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pull-requests': {
+      id: '/pull-requests'
+      path: '/pull-requests'
+      fullPath: '/pull-requests'
+      preLoaderRoute: typeof PullRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/post-verify': {
@@ -217,11 +321,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PostVerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/organization': {
+      id: '/organization'
+      path: '/organization'
+      fullPath: '/organization'
+      preLoaderRoute: typeof OrganizationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invitations': {
+      id: '/invitations'
+      path: '/invitations'
+      fullPath: '/invitations'
+      preLoaderRoute: typeof InvitationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/forgot-password': {
       id: '/forgot-password'
       path: '/forgot-password'
       fullPath: '/forgot-password'
       preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -230,6 +355,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/runs/$runId': {
+      id: '/runs/$runId'
+      path: '/$runId'
+      fullPath: '/runs/$runId'
+      preLoaderRoute: typeof RunsRunIdRouteImport
+      parentRoute: typeof RunsRoute
     }
     '/invite/$invitationId': {
       id: '/invite/$invitationId'
@@ -245,6 +377,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/$': {
+      id: '/api/internal/$'
+      path: '/api/internal/$'
+      fullPath: '/api/internal/$'
+      preLoaderRoute: typeof ApiInternalSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -255,17 +394,33 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface RunsRouteChildren {
+  RunsRunIdRoute: typeof RunsRunIdRoute
+}
+
+const RunsRouteChildren: RunsRouteChildren = {
+  RunsRunIdRoute: RunsRunIdRoute,
+}
+
+const RunsRouteWithChildren = RunsRoute._addFileChildren(RunsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
+  InvitationsRoute: InvitationsRoute,
+  OrganizationRoute: OrganizationRoute,
   PostVerifyRoute: PostVerifyRoute,
+  PullRequestsRoute: PullRequestsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  RunsRoute: RunsRouteWithChildren,
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,
   SignUpCompleteRoute: SignUpCompleteRoute,
   VerificationPendingRoute: VerificationPendingRoute,
   InviteInvitationIdRoute: InviteInvitationIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiInternalSplatRoute: ApiInternalSplatRoute,
   ApiPublicSplatRoute: ApiPublicSplatRoute,
 }
 export const routeTree = rootRouteImport

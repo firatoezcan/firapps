@@ -9,14 +9,86 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as RunsRouteImport } from './routes/runs'
+import { Route as QueueRouteImport } from './routes/queue'
+import { Route as PullRequestsRouteImport } from './routes/pull-requests'
+import { Route as ProjectsRouteImport } from './routes/projects'
+import { Route as OperatorsRouteImport } from './routes/operators'
+import { Route as MembersRouteImport } from './routes/members'
+import { Route as DevboxesRouteImport } from './routes/devboxes'
+import { Route as ControlPlaneRouteImport } from './routes/control-plane'
+import { Route as BlueprintsRouteImport } from './routes/blueprints'
+import { Route as BillingRouteImport } from './routes/billing'
+import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 import { Route as ApiInternalSplatRouteImport } from './routes/api/internal/$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
+const RunsRoute = RunsRouteImport.update({
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QueueRoute = QueueRouteImport.update({
+  id: '/queue',
+  path: '/queue',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PullRequestsRoute = PullRequestsRouteImport.update({
+  id: '/pull-requests',
+  path: '/pull-requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsRoute = ProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorsRoute = OperatorsRouteImport.update({
+  id: '/operators',
+  path: '/operators',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MembersRoute = MembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevboxesRoute = DevboxesRouteImport.update({
+  id: '/devboxes',
+  path: '/devboxes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlPlaneRoute = ControlPlaneRouteImport.update({
+  id: '/control-plane',
+  path: '/control-plane',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BlueprintsRoute = BlueprintsRouteImport.update({
+  id: '/blueprints',
+  path: '/blueprints',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BillingRoute = BillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ActivityRoute = ActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const RunsRunIdRoute = RunsRunIdRouteImport.update({
+  id: '/$runId',
+  path: '/$runId',
+  getParentRoute: () => RunsRoute,
 } as any)
 const ApiInternalSplatRoute = ApiInternalSplatRouteImport.update({
   id: '/api/internal/$',
@@ -31,42 +103,219 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
+  '/billing': typeof BillingRoute
+  '/blueprints': typeof BlueprintsRoute
+  '/control-plane': typeof ControlPlaneRoute
+  '/devboxes': typeof DevboxesRoute
+  '/members': typeof MembersRoute
+  '/operators': typeof OperatorsRoute
+  '/projects': typeof ProjectsRoute
+  '/pull-requests': typeof PullRequestsRoute
+  '/queue': typeof QueueRoute
+  '/runs': typeof RunsRouteWithChildren
+  '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/internal/$': typeof ApiInternalSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
+  '/billing': typeof BillingRoute
+  '/blueprints': typeof BlueprintsRoute
+  '/control-plane': typeof ControlPlaneRoute
+  '/devboxes': typeof DevboxesRoute
+  '/members': typeof MembersRoute
+  '/operators': typeof OperatorsRoute
+  '/projects': typeof ProjectsRoute
+  '/pull-requests': typeof PullRequestsRoute
+  '/queue': typeof QueueRoute
+  '/runs': typeof RunsRouteWithChildren
+  '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/internal/$': typeof ApiInternalSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
+  '/billing': typeof BillingRoute
+  '/blueprints': typeof BlueprintsRoute
+  '/control-plane': typeof ControlPlaneRoute
+  '/devboxes': typeof DevboxesRoute
+  '/members': typeof MembersRoute
+  '/operators': typeof OperatorsRoute
+  '/projects': typeof ProjectsRoute
+  '/pull-requests': typeof PullRequestsRoute
+  '/queue': typeof QueueRoute
+  '/runs': typeof RunsRouteWithChildren
+  '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/internal/$': typeof ApiInternalSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/auth/$' | '/api/internal/$'
+  fullPaths:
+    | '/'
+    | '/activity'
+    | '/billing'
+    | '/blueprints'
+    | '/control-plane'
+    | '/devboxes'
+    | '/members'
+    | '/operators'
+    | '/projects'
+    | '/pull-requests'
+    | '/queue'
+    | '/runs'
+    | '/runs/$runId'
+    | '/api/auth/$'
+    | '/api/internal/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/auth/$' | '/api/internal/$'
-  id: '__root__' | '/' | '/api/auth/$' | '/api/internal/$'
+  to:
+    | '/'
+    | '/activity'
+    | '/billing'
+    | '/blueprints'
+    | '/control-plane'
+    | '/devboxes'
+    | '/members'
+    | '/operators'
+    | '/projects'
+    | '/pull-requests'
+    | '/queue'
+    | '/runs'
+    | '/runs/$runId'
+    | '/api/auth/$'
+    | '/api/internal/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/activity'
+    | '/billing'
+    | '/blueprints'
+    | '/control-plane'
+    | '/devboxes'
+    | '/members'
+    | '/operators'
+    | '/projects'
+    | '/pull-requests'
+    | '/queue'
+    | '/runs'
+    | '/runs/$runId'
+    | '/api/auth/$'
+    | '/api/internal/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ActivityRoute: typeof ActivityRoute
+  BillingRoute: typeof BillingRoute
+  BlueprintsRoute: typeof BlueprintsRoute
+  ControlPlaneRoute: typeof ControlPlaneRoute
+  DevboxesRoute: typeof DevboxesRoute
+  MembersRoute: typeof MembersRoute
+  OperatorsRoute: typeof OperatorsRoute
+  ProjectsRoute: typeof ProjectsRoute
+  PullRequestsRoute: typeof PullRequestsRoute
+  QueueRoute: typeof QueueRoute
+  RunsRoute: typeof RunsRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiInternalSplatRoute: typeof ApiInternalSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/runs': {
+      id: '/runs'
+      path: '/runs'
+      fullPath: '/runs'
+      preLoaderRoute: typeof RunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/queue': {
+      id: '/queue'
+      path: '/queue'
+      fullPath: '/queue'
+      preLoaderRoute: typeof QueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pull-requests': {
+      id: '/pull-requests'
+      path: '/pull-requests'
+      fullPath: '/pull-requests'
+      preLoaderRoute: typeof PullRequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects': {
+      id: '/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof ProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operators': {
+      id: '/operators'
+      path: '/operators'
+      fullPath: '/operators'
+      preLoaderRoute: typeof OperatorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/members': {
+      id: '/members'
+      path: '/members'
+      fullPath: '/members'
+      preLoaderRoute: typeof MembersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/devboxes': {
+      id: '/devboxes'
+      path: '/devboxes'
+      fullPath: '/devboxes'
+      preLoaderRoute: typeof DevboxesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control-plane': {
+      id: '/control-plane'
+      path: '/control-plane'
+      fullPath: '/control-plane'
+      preLoaderRoute: typeof ControlPlaneRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/blueprints': {
+      id: '/blueprints'
+      path: '/blueprints'
+      fullPath: '/blueprints'
+      preLoaderRoute: typeof BlueprintsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/billing': {
+      id: '/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof BillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/activity': {
+      id: '/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof ActivityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/runs/$runId': {
+      id: '/runs/$runId'
+      path: '/$runId'
+      fullPath: '/runs/$runId'
+      preLoaderRoute: typeof RunsRunIdRouteImport
+      parentRoute: typeof RunsRoute
     }
     '/api/internal/$': {
       id: '/api/internal/$'
@@ -85,8 +334,29 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface RunsRouteChildren {
+  RunsRunIdRoute: typeof RunsRunIdRoute
+}
+
+const RunsRouteChildren: RunsRouteChildren = {
+  RunsRunIdRoute: RunsRunIdRoute,
+}
+
+const RunsRouteWithChildren = RunsRoute._addFileChildren(RunsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ActivityRoute: ActivityRoute,
+  BillingRoute: BillingRoute,
+  BlueprintsRoute: BlueprintsRoute,
+  ControlPlaneRoute: ControlPlaneRoute,
+  DevboxesRoute: DevboxesRoute,
+  MembersRoute: MembersRoute,
+  OperatorsRoute: OperatorsRoute,
+  ProjectsRoute: ProjectsRoute,
+  PullRequestsRoute: PullRequestsRoute,
+  QueueRoute: QueueRoute,
+  RunsRoute: RunsRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiInternalSplatRoute: ApiInternalSplatRoute,
 }

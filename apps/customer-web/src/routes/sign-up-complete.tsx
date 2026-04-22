@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { ArrowRight, Building2, LoaderCircle } from "lucide-react";
+import { ArrowRight, Building2, FolderKanban, LoaderCircle, Workflow } from "lucide-react";
 
 import { AppPage, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
@@ -16,15 +16,32 @@ export const Route = createFileRoute("/sign-up-complete")({
   component: SignUpCompletePage,
 });
 
+function resolveAdminOrigin() {
+  const configuredAdminOrigin = process.env.ADMIN_WEB_URL;
+
+  if (typeof configuredAdminOrigin === "string" && configuredAdminOrigin.length > 0) {
+    return configuredAdminOrigin;
+  }
+
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:3001`;
+  }
+
+  return "http://127.0.0.1:3001";
+}
+
+function buildAdminSetupHref() {
+  return new URL("/projects", resolveAdminOrigin()).toString();
+}
+
 function SignUpCompletePage() {
   const navigate = useNavigate();
   const sessionQuery = authClient.useSession();
   const organizationsQuery = authClient.useListOrganizations();
+  const adminSetupHref = buildAdminSetupHref();
 
-  const [draft, setDraft] = useState(() => readOrgBootstrapDraft());
-  const [status, setStatus] = useState<"idle" | "creating" | "ready" | "error">(
-    draft ? "creating" : "idle",
-  );
+  const [draft, setDraft] = useState<ReturnType<typeof readOrgBootstrapDraft>>(null);
+  const [status, setStatus] = useState<"idle" | "creating" | "ready" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const attemptedCreationRef = useRef(false);
 
@@ -32,7 +49,10 @@ function SignUpCompletePage() {
   const organizations = organizationsQuery.data ?? [];
 
   useEffect(() => {
-    setDraft(readOrgBootstrapDraft());
+    const nextDraft = readOrgBootstrapDraft();
+
+    setDraft(nextDraft);
+    setStatus(nextDraft ? "creating" : "idle");
   }, []);
 
   useEffect(() => {
@@ -169,6 +189,34 @@ function SignUpCompletePage() {
               />
             ) : null}
 
+            {status === "ready" ? (
+              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                <p className="font-medium">Founder launch path</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <FolderKanban className="size-4" />
+                      Register the first project
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Open admin project setup, connect the first GitHub repository, and keep the
+                      billing placeholders honest from the start.
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Workflow className="size-4" />
+                      Choose a Blueprint and dispatch
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Once the project exists, move straight into Blueprint selection and the first
+                      unattended run instead of hunting through fallback surfaces.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             {status === "error" && draft ? (
               <form className="grid gap-4 sm:grid-cols-2" onSubmit={handleRetry}>
                 <Field
@@ -216,6 +264,11 @@ function SignUpCompletePage() {
                 Continue to customer home
                 <ArrowRight className="size-4" />
               </Button>
+              {status === "ready" ? (
+                <Button asChild type="button" variant="outline">
+                  <a href={adminSetupHref}>Open founder project setup</a>
+                </Button>
+              ) : null}
               {status === "creating" ? (
                 <Button disabled type="button" variant="outline">
                   <LoaderCircle className="size-4 animate-spin" />
