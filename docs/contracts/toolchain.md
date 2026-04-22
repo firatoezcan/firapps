@@ -43,8 +43,8 @@
   path and `.github/workflows/images.yml` for manual branch image pushes
 - deployable Docker images carry
   `org.opencontainers.image.source=https://github.com/firatoezcan/firapps` so
-  GHCR packages stay linked to the repo and keep working with
-  `GITHUB_TOKEN`-based publication
+  GHCR packages stay linked to the repo
+- GHCR publication uses the repo secret `GHCR_WRITE_TOKEN`
 
 ## Hook posture
 

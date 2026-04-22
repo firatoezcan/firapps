@@ -33,8 +33,10 @@
   on `main`, `.github/workflows/images.yml` is the manual branch image
   build/push path, and the deployable Docker images carry
   `org.opencontainers.image.source=https://github.com/firatoezcan/firapps` so
-  the GHCR packages stay linked to this repository and remain publishable from
-  `GITHUB_TOKEN`-backed workflows
+  the GHCR packages stay linked to this repository
+- GHCR publication currently authenticates with the repo secret
+  `GHCR_WRITE_TOKEN`; the downstream `firops` dispatch still depends on
+  `FIROPS_REPOSITORY_DISPATCH_TOKEN`
 - `apps/web` and `packages/foundation` remain as the earlier bootstrap surface
 - the repo's front door is the Vite+ workflow documented in
   `docs/contracts/toolchain.md`

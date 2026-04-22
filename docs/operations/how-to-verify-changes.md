@@ -240,6 +240,9 @@ Prerequisites:
 
 - the current branch has been pushed to GitHub
 - `gh auth status` succeeds with `repo`, `workflow`, and `write:packages`
+- the GitHub repo secrets `GHCR_WRITE_TOKEN` and
+  `FIROPS_REPOSITORY_DISPATCH_TOKEN` are configured when you expect push and
+  downstream-dispatch steps to succeed
 - you want a branch-level publication proof without waiting for a `main` push
 
 Commands:
@@ -272,9 +275,10 @@ Failure interpretation:
 
 - if the workflow cannot be triggered or cannot push packages, the branch-level
   GHCR publication path is not usable yet
+- if `GHCR_WRITE_TOKEN` is missing or lacks package scope, GHCR publication
+  will fail even when the package metadata itself is linked correctly
 - if any package returns `null` for `.repository.full_name`, the GHCR package
-  is no longer linked to `firatoezcan/firapps` and `GITHUB_TOKEN` publication
-  on `main` is at risk
+  is no longer linked to `firatoezcan/firapps`
 - if any manifest inspect fails, the documented image publication contract is
   ahead of reality
 - if the publish workflow no longer exposes `firapps-image-published`, the
