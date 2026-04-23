@@ -1,19 +1,6 @@
-const defaultCustomerWebUrl = "http://127.0.0.1:3000";
+import { resolveCustomerOrigin } from "./customer-origin";
+
 const defaultAdminWebUrl = "http://127.0.0.1:3001";
-
-function resolveCustomerOrigin() {
-  const configuredCustomerOrigin = process.env.CUSTOMER_WEB_URL;
-
-  if (typeof configuredCustomerOrigin === "string" && configuredCustomerOrigin.length > 0) {
-    return configuredCustomerOrigin;
-  }
-
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3000`;
-  }
-
-  return defaultCustomerWebUrl;
-}
 
 function resolveAdminOrigin() {
   if (typeof window !== "undefined") {

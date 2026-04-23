@@ -159,8 +159,25 @@ async function waitForMessageCount({ minCount, timeoutMs = 30_000, to, subject }
   );
 }
 
-async function getMessage(messageId) {
-  return fetchJson(`${mailpitBase}/message/${messageId}`);
+async function getMessage(messageId, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  const url = `${mailpitBase}/message/${messageId}`;
+
+  while (Date.now() < deadline) {
+    const response = await fetch(url);
+
+    if (response.ok) {
+      return response.json();
+    }
+
+    if (response.status !== 404) {
+      throw new Error(`Request failed: ${response.status} ${response.statusText} for ${url}`);
+    }
+
+    await sleep(500);
+  }
+
+  throw new Error(`Timed out waiting for Mailpit message payload at ${url}`);
 }
 
 function extractFirstUrl(text) {
@@ -223,13 +240,17 @@ async function waitForAnyVisible(locatorFactories, timeoutMs = 30_000) {
 async function ensureAdminOwnerSession({ organizationName, ownerEmail, ownerPassword, page }) {
   const controlPlaneHeading = () =>
     page.getByRole("heading", { name: "Project control plane" }).first();
+  const projectsHeading = () => page.getByRole("heading", { name: "Projects" }).first();
   const sessionSummary = () => page.getByText(`Signed in as ${ownerEmail}.`).first();
   const emailField = () => page.getByLabel("Email").first();
 
-  await waitForAnyVisible([controlPlaneHeading, sessionSummary, emailField]);
+  await waitForAnyVisible([controlPlaneHeading, projectsHeading, sessionSummary, emailField]);
 
   const ownerSignedIn =
     (await controlPlaneHeading()
+      .isVisible()
+      .catch(() => false)) ||
+    (await projectsHeading()
       .isVisible()
       .catch(() => false)) ||
     (await sessionSummary()
@@ -249,22 +270,29 @@ async function ensureAdminOwnerSession({ organizationName, ownerEmail, ownerPass
     .catch(() => false);
 
   if (!onControlPlane) {
-    const activeOrganizationVisible = await page
-      .getByText(`Active organization: ${organizationName}`)
-      .first()
+    await page.goto(`${adminBase}/control-plane`, { waitUntil: "networkidle" });
+    const controlPlaneVisible = await controlPlaneHeading()
       .isVisible()
       .catch(() => false);
 
-    if (!activeOrganizationVisible) {
-      await page.locator(`text=${organizationName}`).first().waitFor({ timeout: 30_000 });
-      await clickButtonByExactName(page, "Set active");
-      await page
+    if (!controlPlaneVisible) {
+      const activeOrganizationVisible = await page
         .getByText(`Active organization: ${organizationName}`)
         .first()
-        .waitFor({ timeout: 30_000 });
-    }
+        .isVisible()
+        .catch(() => false);
 
-    await page.goto(`${adminBase}/control-plane`, { waitUntil: "networkidle" });
+      if (!activeOrganizationVisible) {
+        await page.locator(`text=${organizationName}`).first().waitFor({ timeout: 30_000 });
+        await clickButtonByExactName(page, "Set active");
+        await page
+          .getByText(`Active organization: ${organizationName}`)
+          .first()
+          .waitFor({ timeout: 30_000 });
+      }
+
+      await page.goto(`${adminBase}/control-plane`, { waitUntil: "networkidle" });
+    }
   }
 
   await controlPlaneHeading().waitFor({ timeout: 30_000 });
@@ -501,19 +529,30 @@ async function main() {
     await ownerPage
       .getByText("Organization bootstrap complete. Continue into the customer workspace.")
       .waitFor({ timeout: 30_000 });
-    await ownerPage.getByRole("link", { name: "Open founder project setup" }).waitFor({
+    const founderProjectSetupLink = ownerPage.getByRole("link", { name: "Open founder project setup" });
+    await founderProjectSetupLink.waitFor({
       timeout: 30_000,
     });
+    const founderProjectSetupHref = await founderProjectSetupLink.getAttribute("href");
+    assert(
+      founderProjectSetupHref === `${adminBase}/projects`,
+      `Founder project setup link resolved to ${founderProjectSetupHref} instead of ${adminBase}/projects`,
+    );
     await ownerPage.getByRole("button", { name: "Continue to customer home" }).click();
     await waitForUrlMatch(ownerPage, `${customerBase}/`);
     await ownerPage.getByText("My work hub").first().waitFor({ timeout: 30_000 });
     await ownerPage.getByText("Next best action").first().waitFor({ timeout: 30_000 });
     await ownerPage.locator(`text=${organizationName}`).first().waitFor({ timeout: 30_000 });
-    await ownerPage.getByRole("link", { name: "Open project setup" }).waitFor({
+    const customerProjectSetupLink = ownerPage.getByRole("link", { name: "Open project setup" });
+    await customerProjectSetupLink.waitFor({
       timeout: 30_000,
     });
-
-    await ownerPage.goto(adminBase, { waitUntil: "networkidle" });
+    const customerProjectSetupHref = await customerProjectSetupLink.getAttribute("href");
+    assert(
+      customerProjectSetupHref === `${adminBase}/projects`,
+      `Customer project setup link resolved to ${customerProjectSetupHref} instead of ${adminBase}/projects`,
+    );
+    await ownerPage.goto(`${adminBase}/projects`, { waitUntil: "networkidle" });
     await ensureAdminOwnerSession({
       organizationName,
       ownerEmail,

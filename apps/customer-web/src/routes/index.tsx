@@ -30,6 +30,7 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { authClient } from "../lib/auth-client";
+import { buildAdminRouteHref, resolveAdminOrigin } from "../lib/admin-origin";
 import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
 import { buildCustomerPath, toErrorMessage, toRoleLabel } from "../lib/customer-auth";
 import {
@@ -119,20 +120,6 @@ const emptyOverview: Overview = {
   workspaceCount: 0,
 };
 
-function resolveAdminOrigin() {
-  const configuredAdminOrigin = process.env.ADMIN_WEB_URL;
-
-  if (typeof configuredAdminOrigin === "string" && configuredAdminOrigin.length > 0) {
-    return configuredAdminOrigin;
-  }
-
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3001`;
-  }
-
-  return "http://127.0.0.1:3001";
-}
-
 function normalizeAdminReturnPath(pathOrUrl?: string) {
   if (!pathOrUrl) {
     return null;
@@ -174,10 +161,6 @@ function buildAdminReturnHref(adminReturnPath: string | null) {
   const target = new URL(adminReturnPath, adminOrigin);
 
   return target.toString();
-}
-
-function buildAdminRouteHref(path: string) {
-  return new URL(path, resolveAdminOrigin()).toString();
 }
 
 function isActiveRunStatus(status: string) {

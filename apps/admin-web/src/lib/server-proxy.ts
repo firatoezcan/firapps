@@ -15,16 +15,23 @@ function normalizeTargetBaseUrl(value: string) {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
-function resolveForwardedAuthOrigin(request: Request) {
-  const configuredOrigin = process.env.ADMIN_AUTH_FORWARD_ORIGIN?.replace(/\/+$/, "");
-  const requestUrl = new URL(request.url);
-  const forwardedOrigin = configuredOrigin ?? request.headers.get("origin") ?? requestUrl.origin;
+function normalizeOriginCandidate(value?: string | null) {
+  if (!value) {
+    return null;
+  }
 
   try {
-    return new URL(forwardedOrigin).origin;
+    return new URL(value).origin;
   } catch {
-    return requestUrl.origin;
+    return null;
   }
+}
+
+function resolveForwardedAuthOrigin(request: Request) {
+  const configuredOrigin = normalizeOriginCandidate(process.env.ADMIN_AUTH_FORWARD_ORIGIN);
+  const requestOrigin = normalizeOriginCandidate(request.headers.get("origin"));
+
+  return configuredOrigin ?? requestOrigin;
 }
 
 function buildForwardHeaders(request: Request) {
@@ -38,8 +45,13 @@ function buildForwardHeaders(request: Request) {
 
   headers.set("x-forwarded-host", requestUrl.host);
   headers.set("x-forwarded-proto", requestUrl.protocol.replace(":", ""));
-  headers.set("origin", forwardedAuthOrigin);
-  headers.set("referer", `${forwardedAuthOrigin}/`);
+  if (forwardedAuthOrigin) {
+    headers.set("origin", forwardedAuthOrigin);
+    headers.set("referer", `${forwardedAuthOrigin}/`);
+  } else {
+    headers.delete("origin");
+    headers.delete("referer");
+  }
   headers.delete("sec-fetch-dest");
   headers.delete("sec-fetch-mode");
   headers.delete("sec-fetch-site");

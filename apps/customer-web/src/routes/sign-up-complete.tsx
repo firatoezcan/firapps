@@ -6,6 +6,7 @@ import { AppPage, Card, CardContent, CardDescription, CardHeader, CardTitle } fr
 import { Button } from "@firapps/ui/components/button";
 
 import { authClient } from "../lib/auth-client";
+import { buildAdminRouteHref } from "../lib/admin-origin";
 import {
   clearOrgBootstrapDraft,
   readOrgBootstrapDraft,
@@ -16,29 +17,11 @@ export const Route = createFileRoute("/sign-up-complete")({
   component: SignUpCompletePage,
 });
 
-function resolveAdminOrigin() {
-  const configuredAdminOrigin = process.env.ADMIN_WEB_URL;
-
-  if (typeof configuredAdminOrigin === "string" && configuredAdminOrigin.length > 0) {
-    return configuredAdminOrigin;
-  }
-
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3001`;
-  }
-
-  return "http://127.0.0.1:3001";
-}
-
-function buildAdminSetupHref() {
-  return new URL("/projects", resolveAdminOrigin()).toString();
-}
-
 function SignUpCompletePage() {
   const navigate = useNavigate();
   const sessionQuery = authClient.useSession();
   const organizationsQuery = authClient.useListOrganizations();
-  const adminSetupHref = buildAdminSetupHref();
+  const adminSetupHref = buildAdminRouteHref("/projects");
 
   const [draft, setDraft] = useState<ReturnType<typeof readOrgBootstrapDraft>>(null);
   const [status, setStatus] = useState<"idle" | "creating" | "ready" | "error">("idle");
