@@ -488,8 +488,7 @@ async function installActionCue(context) {
       root.style.inset = "0";
       root.style.pointerEvents = "none";
       root.style.zIndex = "2147483647";
-      root.style.fontFamily =
-        "\"IBM Plex Sans\", \"Avenir Next\", \"Segoe UI\", sans-serif";
+      root.style.fontFamily = '"IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif';
 
       const box = document.createElement("div");
       box.style.position = "fixed";
@@ -971,13 +970,7 @@ async function runFounderBootstrapChapter({ browser, manifest, outputRoot, scena
   manifest.chapters.push(chapter);
 }
 
-async function runOwnerAdminInviteChapter({
-  browser,
-  manifest,
-  outputRoot,
-  scenario,
-  statePaths,
-}) {
+async function runOwnerAdminInviteChapter({ browser, manifest, outputRoot, scenario, statePaths }) {
   const chapter = makeChapterEntry({
     actors: [],
     index: 2,
@@ -1294,13 +1287,7 @@ async function runInviteeAcceptanceChapter({
   manifest.chapters.push(chapter);
 }
 
-async function runProjectBlueprintChapter({
-  browser,
-  manifest,
-  outputRoot,
-  scenario,
-  statePaths,
-}) {
+async function runProjectBlueprintChapter({ browser, manifest, outputRoot, scenario, statePaths }) {
   const chapter = makeChapterEntry({
     actors: [],
     index: 4,
@@ -1896,13 +1883,7 @@ async function runExecutionArtifactsChapter({
   manifest.chapters.push(chapter);
 }
 
-async function runAdminOperationsChapter({
-  browser,
-  manifest,
-  outputRoot,
-  scenario,
-  statePaths,
-}) {
+async function runAdminOperationsChapter({ browser, manifest, outputRoot, scenario, statePaths }) {
   const chapter = makeChapterEntry({
     actors: [],
     index: 7,
@@ -2343,8 +2324,7 @@ async function runCustomerWorkChapter({ browser, manifest, outputRoot, scenario,
   await ownerPage.getByText("requestedBy=self").first().waitFor({ timeout: 30_000 });
   await waitForAnyVisible([
     () => ownerPage.getByRole("link", { name: "Open PR" }).first(),
-    () =>
-      ownerPage.getByText("No member-scoped run exposes a pull request URL right now.").first(),
+    () => ownerPage.getByText("No member-scoped run exposes a pull request URL right now.").first(),
   ]);
 
   await cueAndGoto(
@@ -2563,7 +2543,10 @@ async function writeManifestFiles(manifest) {
       lines.push(`- ${step}`);
     }
     for (const actor of chapter.actors) {
-      const relativeVideoPath = path.relative(manifest.outputRoot, path.resolve(repoRoot, actor.path));
+      const relativeVideoPath = path.relative(
+        manifest.outputRoot,
+        path.resolve(repoRoot, actor.path),
+      );
       lines.push(`- ${actor.actor} video: [${relativeVideoPath}](${relativeVideoPath})`);
     }
     lines.push("");

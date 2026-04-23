@@ -69,15 +69,42 @@
   registration/status/API-key handoff UX, customer-web exposes read-only
   status and install guidance, and this repo still does not implement the
   runner daemon image or firops runtime worker
-- the first frontend TanStack DB slice now lives on `apps/admin-web`
+- TanStack DB is the core frontend data layer for product API requests in
+  `apps/admin-web` and `apps/customer-web`: product reads and product
+  mutations against same-origin `/api/internal/*` and `/api/public/*` must be
+  modeled as TanStack DB collections and consumed through the collection/query
+  layer instead of route-local ad hoc fetch state
+- the current implemented TanStack DB slice is still `apps/admin-web`
   `/queue`: the route uses the existing `/api/internal/queue` HTTP snapshot as
   the client-side collection/cache baseline for queue runs and activity, and it
   can upgrade to `internal-api`'s admin-gated Electric shape proxy endpoints
   for org-scoped runs, dispatches, projects, blueprints, workspaces, run-step
-  counts, and activity only when `ELECTRIC_URL` is configured and healthy;
-  Electric is optional rather than the critical path, and the rest of the
-  frontend data layer remains on the existing same-origin TanStack Start
-  server-route plus fetch path
+  counts, and activity only when `ELECTRIC_URL` is configured and healthy
+- Electric is optional, not the core data-layer contract: every TanStack DB
+  product collection must work over backend HTTP snapshot endpoints with the
+  existing Better Auth session cookies, and Electric may only be added as an
+  org-scoped live-sync source when the backend exposes a narrow shape proxy and
+  the route still degrades cleanly to HTTP snapshots
+- product mutations from the frontends must update the affected TanStack DB
+  collections directly or invalidate/refetch the affected collection queries
+  after the backend accepts the mutation; route-local component state may hold
+  form drafts and UI affordances, but it must not become the canonical cache for
+  product API rows
+- Better Auth client flows are exempt from the TanStack DB product API rule:
+  sign-in, sign-up, sign-out, session refresh, password reset, email
+  verification, active-organization selection, organization membership and
+  invitation calls that go through `authClient` may stay on Better Auth's
+  client/query path until this repo intentionally wraps them; same-origin
+  proxy routes, health checks, static assets, and the guarded local/test debug
+  login helper are also outside the product collection boundary
+- the current migration inventory is high level and explicit: `admin-web`
+  still has direct product API fetch paths in the shared control-plane helper
+  plus routes for projects, Blueprints, runs, run detail, pull requests,
+  devboxes/workspaces, billing/usage, activity, operators, runners, and
+  sidechannel dispatch; `customer-web` still has direct product API fetch paths
+  for the public catalog/announcements, member dashboard, projects, overview,
+  activity, member-scoped runs and run detail, pull requests, organization,
+  and runners; those paths are migration slices, not new precedent
 - when the product runs behind sibling subdomains such as
   `customer.firapps.platform.localhost` and `admin.firapps.platform.localhost`,
   `apps/internal-api` may receive `BETTER_AUTH_COOKIE_DOMAIN` so Better Auth

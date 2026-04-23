@@ -56,24 +56,47 @@ Failure interpretation:
 - if either frontend build fails after the shared UI change, the token surface
   is no longer compatible with the current app consumers
 
-### Focused queue TanStack DB slice verification
+### Focused TanStack DB core data-layer verification
 
 **Verification class:** self-contained + external-fixture
 
 Commands:
 
 ```bash
+vp check
 vp run internal-api#build
+vp run public-api#build
 vp run admin-web#build
+vp run customer-web#build
 ```
 
 Expected signal:
 
+- `vp check` exits `0` after contract, verification, and reviewer guidance
+  changes
 - `internal-api` builds with the queue snapshot, queue metrics, and optional
   admin-gated Electric shape proxy endpoints for the queue slice
+- `public-api` still builds for the HTTP-backed public product collection
+  source that customer-web must migrate onto
 - `admin-web` builds with the `/queue` TanStack DB read path backed by the
   `/api/internal/queue` HTTP snapshot collections, while Electric remains an
   optional live-sync source when configured
+- `customer-web` still builds while its current product API fetch paths remain
+  an explicit migration inventory rather than new precedent
+- for any follow-on migration slice, product API reads and mutations against
+  `/api/internal/*` or `/api/public/*` are exposed through TanStack DB
+  collections/query consumption; remaining direct product fetches in the
+  touched slice are either removed or documented as a named exemption
+- Better Auth `authClient` calls for session, sign-in/sign-up, password reset,
+  email verification, organization membership, invitations, and active-org
+  selection remain allowed outside TanStack DB unless that slice intentionally
+  wraps them
+- HTTP snapshot collections use same-origin backend endpoints with
+  `credentials: "include"`, stable row keys, explicit normalization, and
+  auth/error handling that matches the existing backend contract
+- frontend mutations call the backend first, then update the affected
+  collection rows or invalidate/refetch the affected collection queries before
+  reporting success in the UI
 
 External fixture proof, when an Electric sync service is available:
 
@@ -92,20 +115,30 @@ Then open signed-in admin `/queue` and confirm:
   the Electric-backed local collections after the HTTP snapshot has seeded the
   page-local cache, while runtime capacity still comes from
   `/api/internal/queue/metrics`
-- the migration boundary is still narrow: `/queue` is the only frontend route
-  on TanStack DB and the other routes continue using the existing same-origin
-  server-route fetch path
+- the implemented migration boundary is still honest: `/queue` is the only
+  completed frontend route on TanStack DB until the follow-on migration slices
+  land, and other current route fetches are tracked as migration inventory
 
 Failure interpretation:
 
+- if `vp check` fails after a data-layer contract change, the docs or static
+  quality surface regressed
 - if `internal-api` build fails, the Electric queue support endpoints or config
   contract regressed
+- if `public-api` build fails, the public product HTTP snapshot source
+  regressed before customer-web collection migration
 - if `admin-web` build fails, the queue route no longer compiles against the
   Electric/TanStack DB slice
+- if `customer-web` build fails, the future public/internal collection
+  migration surface is already broken
 - if signed-in admin `/queue` hard-fails or bypasses TanStack DB when Electric
   is unavailable, the HTTP-backed TanStack DB boundary regressed
 - if runtime-capacity cards stop loading unless Electric is healthy, the queue
   metrics split regressed
+- if a follow-on migration adds new route-local product fetch state instead of
+  collection/query consumption, the core frontend data-layer contract regressed
+- if Electric becomes required for a frontend product collection to render
+  baseline backend data, the optional-sync boundary regressed
 
 ### Focused user-installed runner control-plane verification
 

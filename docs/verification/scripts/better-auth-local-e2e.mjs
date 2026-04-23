@@ -529,7 +529,9 @@ async function main() {
     await ownerPage
       .getByText("Organization bootstrap complete. Continue into the customer workspace.")
       .waitFor({ timeout: 30_000 });
-    const founderProjectSetupLink = ownerPage.getByRole("link", { name: "Open founder project setup" });
+    const founderProjectSetupLink = ownerPage.getByRole("link", {
+      name: "Open founder project setup",
+    });
     await founderProjectSetupLink.waitFor({
       timeout: 30_000,
     });
