@@ -27,13 +27,15 @@ import { Button } from "@firapps/ui/components/button";
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
 import {
   type RuntimeCapacity,
+  clearAdminQueueHttpSnapshot,
   fetchQueueMetrics,
+  fetchQueueSnapshot,
   preloadAdminQueueCollections,
+  replaceAdminQueueHttpSnapshot,
   useAdminQueueLiveSlice,
 } from "../lib/admin-queue-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type ActivityItem,
   type LoadStatus,
   type Overview,
   type RunRecord,
@@ -46,9 +48,6 @@ import {
   getRunOperatorSummary,
   getRunQueueStage,
   getRunRetryActionLabel,
-  normalizeActivity,
-  normalizeRuns,
-  requestInternalApi,
   retryRun,
   runTone,
   statusTone,
@@ -100,8 +99,6 @@ function QueueRoute() {
   const [metricsStatus, setMetricsStatus] = useState<LoadStatus>("idle");
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [electricEnabled, setElectricEnabled] = useState(false);
-  const [fallbackRuns, setFallbackRuns] = useState<RunRecord[]>([]);
-  const [fallbackActivity, setFallbackActivity] = useState<ActivityItem[]>([]);
   const [overview, setOverview] = useState<Overview>(emptyOverview);
   const [runtimeCapacity, setRuntimeCapacity] = useState<RuntimeCapacity>(emptyRuntimeCapacity);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
@@ -109,21 +106,19 @@ function QueueRoute() {
     message: string;
     tone: "danger" | "success";
   } | null>(null);
-  const liveSlice = useAdminQueueLiveSlice(
-    Boolean(session && activeOrganization?.id && electricEnabled),
-  );
+  const queueSource = electricEnabled ? "electric" : "http";
+  const liveSlice = useAdminQueueLiveSlice(Boolean(session && activeOrganization?.id), queueSource);
 
   useEffect(() => {
     if (!session || !activeOrganization?.id) {
       setMetricsStatus("idle");
       setMetricsError(null);
       setElectricEnabled(false);
-      setFallbackRuns([]);
-      setFallbackActivity([]);
       setOverview(emptyOverview);
       setRuntimeCapacity(emptyRuntimeCapacity);
       setRetryingRunId(null);
       setNotice(null);
+      void clearAdminQueueHttpSnapshot().catch(() => undefined);
       return;
     }
 
@@ -142,14 +137,12 @@ function QueueRoute() {
     }
 
     setElectricEnabled(false);
-    void refreshFallbackQueueSnapshot();
+    void refreshHttpQueueSnapshot();
   }, [electricEnabled, liveSlice.error]);
 
-  const runs = electricEnabled ? liveSlice.runs : fallbackRuns;
-  const activity = electricEnabled ? liveSlice.activity : fallbackActivity;
-  const runStatus = electricEnabled
-    ? combineStatuses(metricsStatus, liveSlice.status)
-    : metricsStatus;
+  const runs = liveSlice.runs;
+  const activity = liveSlice.activity;
+  const runStatus = combineStatuses(metricsStatus, liveSlice.status);
   const runError = metricsError ?? (electricEnabled ? liveSlice.error : null);
 
   const queueRuns = useMemo(
@@ -229,11 +222,7 @@ function QueueRoute() {
           : `${getRunRetryActionLabel(run)} accepted.`,
         tone: "success",
       });
-      if (electricEnabled) {
-        await Promise.all([refreshQueueMetrics(), preloadAdminQueueCollections()]);
-      } else {
-        await refreshQueueView();
-      }
+      await refreshQueueView();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to retry the selected run."),
@@ -251,7 +240,6 @@ function QueueRoute() {
     try {
       const metrics = await fetchQueueMetrics();
 
-      setElectricEnabled(metrics.electricEnabled);
       setOverview(metrics.overview);
       setRuntimeCapacity(metrics.runtimeCapacity);
       setMetricsStatus("ready");
@@ -267,42 +255,66 @@ function QueueRoute() {
   }
 
   async function refreshQueueView() {
-    try {
-      const metrics = await refreshQueueMetrics();
+    const [snapshotResult, metricsResult] = await Promise.allSettled([
+      refreshHttpQueueSnapshot(),
+      refreshQueueMetrics(),
+    ]);
+    const snapshotLoaded = snapshotResult.status === "fulfilled";
 
-      if (metrics.electricEnabled) {
-        setFallbackRuns([]);
-        setFallbackActivity([]);
-        await preloadAdminQueueCollections();
-        return;
-      }
-    } catch {
-      setFallbackRuns([]);
-      setFallbackActivity([]);
+    if (!snapshotLoaded && metricsResult.status === "rejected") {
       return;
     }
 
-    await refreshFallbackQueueSnapshot();
+    if (snapshotLoaded) {
+      setOverview(snapshotResult.value.overview);
+      setRuntimeCapacity(snapshotResult.value.runtimeCapacity);
+      setMetricsStatus("ready");
+    }
+
+    if (metricsResult.status === "rejected") {
+      setElectricEnabled(false);
+      return;
+    }
+
+    setOverview(metricsResult.value.overview);
+    setRuntimeCapacity(metricsResult.value.runtimeCapacity);
+
+    if (metricsResult.value.electricEnabled) {
+      try {
+        await preloadAdminQueueCollections();
+        setElectricEnabled(true);
+        return;
+      } catch (caughtError) {
+        setElectricEnabled(false);
+        if (!snapshotLoaded) {
+          setMetricsStatus("error");
+          setMetricsError(toErrorMessage(caughtError, "Unable to load queue health data."));
+        }
+      }
+      return;
+    }
+
+    setElectricEnabled(false);
   }
 
-  async function refreshFallbackQueueSnapshot() {
+  async function refreshHttpQueueSnapshot() {
     setMetricsStatus("loading");
     setMetricsError(null);
 
     try {
-      const payload = (await requestInternalApi("/queue")) as {
-        activity?: unknown[];
-        runs?: unknown[];
-      } | null;
+      const snapshot = await fetchQueueSnapshot();
 
-      setFallbackRuns(normalizeRuns(payload?.runs));
-      setFallbackActivity(normalizeActivity(payload?.activity));
+      await replaceAdminQueueHttpSnapshot(snapshot);
+      setOverview(snapshot.overview);
+      setRuntimeCapacity(snapshot.runtimeCapacity);
       setMetricsStatus("ready");
+      return snapshot;
     } catch (caughtError) {
       setMetricsStatus("error");
       setMetricsError(toErrorMessage(caughtError, "Unable to load queue health data."));
-      setFallbackRuns([]);
-      setFallbackActivity([]);
+      setElectricEnabled(false);
+      await clearAdminQueueHttpSnapshot();
+      throw caughtError;
     }
   }
 
@@ -310,7 +322,7 @@ function QueueRoute() {
     <AppPage
       eyebrow="Admin web"
       title="Run queue"
-      description="The first TanStack DB + ElectricSQL slice now keeps Postgres-backed queue rows live on this page, while provisioner/runtime capacity remains on the existing HTTP snapshot."
+      description="The first TanStack DB queue slice now uses the backend HTTP snapshot as its client-side cache baseline, with ElectricSQL remaining an optional live-sync upgrade."
       actions={
         <>
           <Button asChild type="button" variant="outline">
@@ -426,8 +438,8 @@ function QueueRoute() {
               Capacity snapshot
             </CardTitle>
             <CardDescription>
-              Queue counts are now derived from the Electric-backed local cache, while the
-              provisioner runtime snapshot still comes from the backend HTTP surface.
+              Queue counts are now derived from the TanStack DB local cache, while the provisioner
+              runtime snapshot still comes from the backend HTTP surface.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
@@ -506,8 +518,8 @@ function QueueRoute() {
           <CardHeader>
             <CardTitle>Recent activity</CardTitle>
             <CardDescription>
-              Latest activity rows now replicated into the page-local Electric slice from
-              `/api/internal/electric/queue/activity`.
+              Latest activity rows are cached in the page-local TanStack DB slice from the queue
+              snapshot, or live Electric activity shape when that optional sync is active.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

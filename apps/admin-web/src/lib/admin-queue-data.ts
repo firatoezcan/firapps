@@ -1,6 +1,10 @@
-import { useLiveQuery } from "@tanstack/react-db";
-import { createCollection } from "@tanstack/react-db";
 import { electricCollectionOptions } from "@tanstack/electric-db-collection";
+import {
+  createCollection,
+  useLiveQuery,
+  type Collection,
+  type SyncConfig,
+} from "@tanstack/react-db";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -11,7 +15,9 @@ import {
   type RunRecord,
   type RunStepCounts,
   type Workspace,
+  normalizeActivity,
   normalizeOverview,
+  normalizeRuns,
   requestInternalApi,
   toErrorMessage,
 } from "./control-plane";
@@ -36,6 +42,13 @@ type QueueMetrics = {
   overview: Overview;
   runtimeCapacity: RuntimeCapacity;
 };
+
+type QueueSnapshot = QueueMetrics & {
+  activity: ActivityItem[];
+  runs: RunRecord[];
+};
+
+type QueueDataSource = "electric" | "http";
 
 type QueueRunRow = {
   id: string;
@@ -211,6 +224,68 @@ const queueActivityCollection = createCollection(
   }),
 );
 
+type HttpSnapshotCollection<T extends object, TKey extends string | number> = {
+  collection: Collection<T, TKey>;
+  replaceRows: (rows: T[]) => Promise<void>;
+};
+
+function createHttpSnapshotCollection<T extends object, TKey extends string | number>({
+  getKey,
+  id,
+}: {
+  getKey: (row: T) => TKey;
+  id: string;
+}): HttpSnapshotCollection<T, TKey> {
+  type SyncParams = Parameters<SyncConfig<T, TKey>["sync"]>[0];
+
+  let syncParams: SyncParams | null = null;
+  const collection = createCollection<T, TKey>({
+    getKey,
+    id,
+    sync: {
+      sync: (params) => {
+        syncParams = params;
+        params.markReady();
+
+        return () => {
+          syncParams = null;
+        };
+      },
+    },
+  });
+
+  return {
+    collection,
+    replaceRows: async (rows) => {
+      await collection.preload();
+
+      if (!syncParams) {
+        throw new Error(`HTTP snapshot collection ${id} is not ready.`);
+      }
+
+      syncParams.begin({ immediate: true });
+      syncParams.truncate();
+      for (const row of rows) {
+        syncParams.write({
+          type: "insert",
+          value: row,
+        });
+      }
+      syncParams.commit();
+    },
+  };
+}
+
+const queueHttpRuns = createHttpSnapshotCollection<RunRecord, string>({
+  getKey: (row) => row.id,
+  id: "admin-queue-http-runs",
+});
+
+const queueHttpActivity = createHttpSnapshotCollection<ActivityItem, string>({
+  getKey: (row) => row.id,
+  id: "admin-queue-http-activity",
+});
+
 const queueCollections = [
   queueRunsCollection,
   queueDispatchesCollection,
@@ -220,6 +295,8 @@ const queueCollections = [
   queueRunStepsCollection,
   queueActivityCollection,
 ] as const;
+
+const queueHttpCollections = [queueHttpRuns.collection, queueHttpActivity.collection] as const;
 
 export async function fetchQueueMetrics() {
   const payload = (await requestInternalApi("/queue/metrics")) as {
@@ -237,15 +314,56 @@ export async function fetchQueueMetrics() {
   } satisfies QueueMetrics;
 }
 
+export async function fetchQueueSnapshot() {
+  const payload = (await requestInternalApi("/queue")) as {
+    activity?: unknown;
+    generatedAt?: unknown;
+    overview?: unknown;
+    runtimeCapacity?: unknown;
+    runs?: unknown;
+  } | null;
+
+  return {
+    activity: normalizeActivity(payload?.activity),
+    electricEnabled: false,
+    generatedAt: readString(payload, "generatedAt") ?? null,
+    overview: normalizeOverview(payload?.overview),
+    runtimeCapacity: normalizeRuntimeCapacity(payload?.runtimeCapacity),
+    runs: normalizeRuns(payload?.runs),
+  } satisfies QueueSnapshot;
+}
+
 export async function preloadAdminQueueCollections() {
   await Promise.all(queueCollections.map((collection) => collection.preload()));
 }
 
-export function useAdminQueueLiveSlice(enabled: boolean) {
+export async function preloadAdminQueueHttpCollections() {
+  await Promise.all(queueHttpCollections.map((collection) => collection.preload()));
+}
+
+export async function replaceAdminQueueHttpSnapshot(
+  snapshot: Pick<QueueSnapshot, "activity" | "runs">,
+) {
+  await Promise.all([
+    queueHttpRuns.replaceRows(snapshot.runs),
+    queueHttpActivity.replaceRows(snapshot.activity),
+  ]);
+}
+
+export async function clearAdminQueueHttpSnapshot() {
+  await replaceAdminQueueHttpSnapshot({
+    activity: [],
+    runs: [],
+  });
+}
+
+export function useAdminQueueLiveSlice(enabled: boolean, source: QueueDataSource) {
   const [preloadError, setPreloadError] = useState<string | null>(null);
+  const electricEnabled = enabled && source === "electric";
+  const httpEnabled = enabled && source === "http";
 
   useEffect(() => {
-    if (!enabled) {
+    if (!electricEnabled) {
       setPreloadError(null);
       return;
     }
@@ -262,64 +380,85 @@ export function useAdminQueueLiveSlice(enabled: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [electricEnabled]);
 
   const runsResult = useLiveQuery((query) =>
-    enabled ? query.from({ run: queueRunsCollection }) : undefined,
+    electricEnabled ? query.from({ run: queueRunsCollection }) : undefined,
   );
   const dispatchesResult = useLiveQuery((query) =>
-    enabled ? query.from({ dispatch: queueDispatchesCollection }) : undefined,
+    electricEnabled ? query.from({ dispatch: queueDispatchesCollection }) : undefined,
   );
   const projectsResult = useLiveQuery((query) =>
-    enabled ? query.from({ project: queueProjectsCollection }) : undefined,
+    electricEnabled ? query.from({ project: queueProjectsCollection }) : undefined,
   );
   const blueprintsResult = useLiveQuery((query) =>
-    enabled ? query.from({ blueprint: queueBlueprintsCollection }) : undefined,
+    electricEnabled ? query.from({ blueprint: queueBlueprintsCollection }) : undefined,
   );
   const workspacesResult = useLiveQuery((query) =>
-    enabled ? query.from({ workspace: queueWorkspacesCollection }) : undefined,
+    electricEnabled ? query.from({ workspace: queueWorkspacesCollection }) : undefined,
   );
   const runStepsResult = useLiveQuery((query) =>
-    enabled ? query.from({ step: queueRunStepsCollection }) : undefined,
+    electricEnabled ? query.from({ step: queueRunStepsCollection }) : undefined,
   );
   const activityResult = useLiveQuery((query) =>
-    enabled ? query.from({ activity: queueActivityCollection }) : undefined,
+    electricEnabled ? query.from({ activity: queueActivityCollection }) : undefined,
+  );
+  const httpRunsResult = useLiveQuery((query) =>
+    httpEnabled ? query.from({ run: queueHttpRuns.collection }) : undefined,
+  );
+  const httpActivityResult = useLiveQuery((query) =>
+    httpEnabled ? query.from({ activity: queueHttpActivity.collection }) : undefined,
   );
 
-  const status = resolveLiveStatus(enabled, [
-    runsResult.status,
-    dispatchesResult.status,
-    projectsResult.status,
-    blueprintsResult.status,
-    workspacesResult.status,
-    runStepsResult.status,
-    activityResult.status,
-  ]);
+  const status =
+    source === "electric"
+      ? resolveLiveStatus(electricEnabled, [
+          runsResult.status,
+          dispatchesResult.status,
+          projectsResult.status,
+          blueprintsResult.status,
+          workspacesResult.status,
+          runStepsResult.status,
+          activityResult.status,
+        ])
+      : resolveLiveStatus(httpEnabled, [httpRunsResult.status, httpActivityResult.status]);
   const error =
-    preloadError ?? (status === "error" ? "Electric queue sync entered an error state." : null);
+    source === "electric"
+      ? (preloadError ??
+        (status === "error" ? "Electric queue sync entered an error state." : null))
+      : status === "error"
+        ? "HTTP queue snapshot cache entered an error state."
+        : null;
 
-  const runs = useMemo(
-    () =>
-      buildRunRecords({
-        blueprints: blueprintsResult.data ?? [],
-        dispatches: dispatchesResult.data ?? [],
-        projects: projectsResult.data ?? [],
-        runs: runsResult.data ?? [],
-        runSteps: runStepsResult.data ?? [],
-        workspaces: workspacesResult.data ?? [],
-      }),
-    [
-      blueprintsResult.data,
-      dispatchesResult.data,
-      projectsResult.data,
-      runsResult.data,
-      runStepsResult.data,
-      workspacesResult.data,
-    ],
-  );
+  const runs = useMemo(() => {
+    if (source === "http") {
+      return httpRunsResult.data ?? [];
+    }
+
+    return buildRunRecords({
+      blueprints: blueprintsResult.data ?? [],
+      dispatches: dispatchesResult.data ?? [],
+      projects: projectsResult.data ?? [],
+      runs: runsResult.data ?? [],
+      runSteps: runStepsResult.data ?? [],
+      workspaces: workspacesResult.data ?? [],
+    });
+  }, [
+    blueprintsResult.data,
+    dispatchesResult.data,
+    httpRunsResult.data,
+    projectsResult.data,
+    runsResult.data,
+    runStepsResult.data,
+    source,
+    workspacesResult.data,
+  ]);
   const activity = useMemo(
-    () => buildActivityItems(activityResult.data ?? []),
-    [activityResult.data],
+    () =>
+      source === "http"
+        ? (httpActivityResult.data ?? [])
+        : buildActivityItems(activityResult.data ?? []),
+    [activityResult.data, httpActivityResult.data, source],
   );
 
   return {

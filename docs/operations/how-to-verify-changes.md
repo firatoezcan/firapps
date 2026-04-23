@@ -56,7 +56,7 @@ Failure interpretation:
 - if either frontend build fails after the shared UI change, the token surface
   is no longer compatible with the current app consumers
 
-### Focused queue Electric slice verification
+### Focused queue TanStack DB slice verification
 
 **Verification class:** self-contained + external-fixture
 
@@ -69,10 +69,11 @@ vp run admin-web#build
 
 Expected signal:
 
-- `internal-api` builds with the queue metrics endpoint plus the admin-gated
-  Electric shape proxy endpoints for the queue slice
-- `admin-web` builds with the `/queue` TanStack DB + ElectricSQL read path and
-  the fallback back to `/api/internal/queue`
+- `internal-api` builds with the queue snapshot, queue metrics, and optional
+  admin-gated Electric shape proxy endpoints for the queue slice
+- `admin-web` builds with the `/queue` TanStack DB read path backed by the
+  `/api/internal/queue` HTTP snapshot collections, while Electric remains an
+  optional live-sync source when configured
 
 External fixture proof, when an Electric sync service is available:
 
@@ -86,13 +87,14 @@ vp run admin-web#dev
 Then open signed-in admin `/queue` and confirm:
 
 - queue cards continue rendering if Electric is unset or unavailable because
-  the route falls back to `/api/internal/queue`
-- when Electric is configured and healthy, queue runs/activity update from the
-  Electric-backed local collections while runtime capacity still comes from
+  the route seeds TanStack DB from `/api/internal/queue`
+- when Electric is configured and healthy, queue runs/activity can update from
+  the Electric-backed local collections after the HTTP snapshot has seeded the
+  page-local cache, while runtime capacity still comes from
   `/api/internal/queue/metrics`
 - the migration boundary is still narrow: `/queue` is the only frontend route
-  on TanStack DB + ElectricSQL and the other routes continue using the
-  existing same-origin server-route fetch path
+  on TanStack DB and the other routes continue using the existing same-origin
+  server-route fetch path
 
 Failure interpretation:
 
@@ -100,8 +102,8 @@ Failure interpretation:
   contract regressed
 - if `admin-web` build fails, the queue route no longer compiles against the
   Electric/TanStack DB slice
-- if signed-in admin `/queue` hard-fails when Electric is unavailable, the
-  fallback boundary regressed
+- if signed-in admin `/queue` hard-fails or bypasses TanStack DB when Electric
+  is unavailable, the HTTP-backed TanStack DB boundary regressed
 - if runtime-capacity cards stop loading unless Electric is healthy, the queue
   metrics split regressed
 

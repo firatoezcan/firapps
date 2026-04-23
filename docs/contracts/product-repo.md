@@ -69,14 +69,15 @@
   registration/status/API-key handoff UX, customer-web exposes read-only
   status and install guidance, and this repo still does not implement the
   runner daemon image or firops runtime worker
-- the first frontend TanStack DB + ElectricSQL slice now lives on
-  `apps/admin-web` `/queue`: org-scoped queue runs, dispatches, projects,
-  blueprints, workspaces, run-step counts, and activity can sync through
-  `internal-api`'s admin-gated Electric shape proxy endpoints when
-  `ELECTRIC_URL` is configured; the same route still falls back to the
-  existing `/api/internal/queue` snapshot when Electric is unavailable or
-  unhealthy, and the rest of the frontend data layer remains on the existing
-  same-origin TanStack Start server-route plus fetch path
+- the first frontend TanStack DB slice now lives on `apps/admin-web`
+  `/queue`: the route uses the existing `/api/internal/queue` HTTP snapshot as
+  the client-side collection/cache baseline for queue runs and activity, and it
+  can upgrade to `internal-api`'s admin-gated Electric shape proxy endpoints
+  for org-scoped runs, dispatches, projects, blueprints, workspaces, run-step
+  counts, and activity only when `ELECTRIC_URL` is configured and healthy;
+  Electric is optional rather than the critical path, and the rest of the
+  frontend data layer remains on the existing same-origin TanStack Start
+  server-route plus fetch path
 - when the product runs behind sibling subdomains such as
   `customer.firapps.platform.localhost` and `admin.firapps.platform.localhost`,
   `apps/internal-api` may receive `BETTER_AUTH_COOKIE_DOMAIN` so Better Auth
