@@ -255,6 +255,22 @@ type BuildRunResponseOptions = {
   reconcile?: boolean;
 };
 
+function buildElectricUuidInFilter(columnName: string, ids: string[]) {
+  if (ids.length === 0) {
+    return {
+      params: {},
+      where: `${columnName} is null`,
+    };
+  }
+
+  const placeholders = ids.map((_, index) => `$${index + 1}`);
+
+  return {
+    params: Object.fromEntries(ids.map((id, index) => [String(index + 1), id])),
+    where: `${columnName} in (${placeholders.join(", ")})`,
+  };
+}
+
 const activeRunStatuses = ["provisioning", "workspace_ready", "in_progress"] as const;
 let runReconciliationInFlight: Promise<void> | null = null;
 let runReconciliationRequested = false;
@@ -4052,6 +4068,15 @@ app.get(`${internalApiEnv.API_PREFIX}/electric/queue/workspaces`, async (c) => {
     return accessResult.response;
   }
 
+  const projectRows = await runtime.db
+    .select({ id: organizationTenants.id })
+    .from(organizationTenants)
+    .where(eq(organizationTenants.organizationId, accessResult.access.organizationId));
+  const projectIdFilter = buildElectricUuidInFilter(
+    "tenant_id",
+    projectRows.map((project) => project.id),
+  );
+
   return proxyElectricShape(c, {
     columns: [
       "id",
@@ -4069,13 +4094,10 @@ app.get(`${internalApiEnv.API_PREFIX}/electric/queue/workspaces`, async (c) => {
       "created_at",
       "updated_at",
     ],
-    params: {
-      1: accessResult.access.organizationId,
-    },
+    params: projectIdFilter.params,
     replica: "full",
     table: "operations.organization_workspaces",
-    where:
-      "status <> 'deleted' and tenant_id in (select id from operations.organization_tenants where organization_id = $1)",
+    where: `status <> 'deleted' and ${projectIdFilter.where}`,
   });
 });
 
@@ -4086,14 +4108,21 @@ app.get(`${internalApiEnv.API_PREFIX}/electric/queue/run-steps`, async (c) => {
     return accessResult.response;
   }
 
+  const runRows = await runtime.db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(eq(runs.organizationId, accessResult.access.organizationId));
+  const runIdFilter = buildElectricUuidInFilter(
+    "run_id",
+    runRows.map((runRecord) => runRecord.id),
+  );
+
   return proxyElectricShape(c, {
     columns: ["id", "run_id", "status"],
-    params: {
-      1: accessResult.access.organizationId,
-    },
+    params: runIdFilter.params,
     replica: "full",
     table: "operations.run_steps",
-    where: "run_id in (select id from operations.runs where organization_id = $1)",
+    where: runIdFilter.where,
   });
 });
 

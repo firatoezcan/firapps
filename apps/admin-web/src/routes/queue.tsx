@@ -57,6 +57,7 @@ import {
 import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
 
 export const Route = createFileRoute("/queue")({
+  ssr: false,
   component: QueueRoute,
 });
 

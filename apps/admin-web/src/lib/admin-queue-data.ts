@@ -132,12 +132,21 @@ const emptyRuntimeCapacity: RuntimeCapacity = {
   waitingRuns: 0,
 };
 
+function queueShapeUrl(path: string) {
+  const origin =
+    typeof window === "undefined"
+      ? (process.env.ADMIN_WEB_URL ?? "http://127.0.0.1:3001")
+      : window.location.origin;
+
+  return new URL(path, origin).toString();
+}
+
 const queueRunsCollection = createCollection(
   electricCollectionOptions<QueueRunRow>({
     getKey: (row) => row.id,
     id: "admin-queue-electric-runs",
     shapeOptions: {
-      url: "/api/internal/electric/queue/runs",
+      url: queueShapeUrl("/api/internal/electric/queue/runs"),
     },
   }),
 );
@@ -147,7 +156,7 @@ const queueDispatchesCollection = createCollection(
     getKey: (row) => row.id,
     id: "admin-queue-electric-dispatches",
     shapeOptions: {
-      url: "/api/internal/electric/queue/dispatches",
+      url: queueShapeUrl("/api/internal/electric/queue/dispatches"),
     },
   }),
 );
@@ -157,7 +166,7 @@ const queueProjectsCollection = createCollection(
     getKey: (row) => row.id,
     id: "admin-queue-electric-projects",
     shapeOptions: {
-      url: "/api/internal/electric/queue/projects",
+      url: queueShapeUrl("/api/internal/electric/queue/projects"),
     },
   }),
 );
@@ -167,7 +176,7 @@ const queueBlueprintsCollection = createCollection(
     getKey: (row) => row.id,
     id: "admin-queue-electric-blueprints",
     shapeOptions: {
-      url: "/api/internal/electric/queue/blueprints",
+      url: queueShapeUrl("/api/internal/electric/queue/blueprints"),
     },
   }),
 );
@@ -177,7 +186,7 @@ const queueWorkspacesCollection = createCollection(
     getKey: (row) => row.id,
     id: "admin-queue-electric-workspaces",
     shapeOptions: {
-      url: "/api/internal/electric/queue/workspaces",
+      url: queueShapeUrl("/api/internal/electric/queue/workspaces"),
     },
   }),
 );
@@ -187,7 +196,7 @@ const queueRunStepsCollection = createCollection(
     getKey: (row) => row.id,
     id: "admin-queue-electric-run-steps",
     shapeOptions: {
-      url: "/api/internal/electric/queue/run-steps",
+      url: queueShapeUrl("/api/internal/electric/queue/run-steps"),
     },
   }),
 );
@@ -197,7 +206,7 @@ const queueActivityCollection = createCollection(
     getKey: (row) => row.id,
     id: "admin-queue-electric-activity",
     shapeOptions: {
-      url: "/api/internal/electric/queue/activity",
+      url: queueShapeUrl("/api/internal/electric/queue/activity"),
     },
   }),
 );
