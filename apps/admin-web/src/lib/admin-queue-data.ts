@@ -1,5 +1,5 @@
 import { electricCollectionOptions } from "@tanstack/electric-db-collection";
-import { createCollection, useLiveQuery } from "@tanstack/react-db";
+import { createCollection, type Collection } from "@tanstack/react-db";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -326,33 +326,15 @@ export function useAdminQueueLiveSlice(enabled: boolean, source: QueueDataSource
     };
   }, [electricEnabled]);
 
-  const runsResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ run: queueRunsCollection }) : undefined,
-  );
-  const dispatchesResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ dispatch: queueDispatchesCollection }) : undefined,
-  );
-  const projectsResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ project: queueProjectsCollection }) : undefined,
-  );
-  const blueprintsResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ blueprint: queueBlueprintsCollection }) : undefined,
-  );
-  const workspacesResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ workspace: queueWorkspacesCollection }) : undefined,
-  );
-  const runStepsResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ step: queueRunStepsCollection }) : undefined,
-  );
-  const activityResult = useLiveQuery((query) =>
-    electricEnabled ? query.from({ activity: queueActivityCollection }) : undefined,
-  );
-  const httpRunsResult = useLiveQuery((query) =>
-    httpEnabled ? query.from({ run: queueHttpRuns.collection }) : undefined,
-  );
-  const httpActivityResult = useLiveQuery((query) =>
-    httpEnabled ? query.from({ activity: queueHttpActivity.collection }) : undefined,
-  );
+  const runsResult = useCollectionSnapshot(queueRunsCollection, electricEnabled);
+  const dispatchesResult = useCollectionSnapshot(queueDispatchesCollection, electricEnabled);
+  const projectsResult = useCollectionSnapshot(queueProjectsCollection, electricEnabled);
+  const blueprintsResult = useCollectionSnapshot(queueBlueprintsCollection, electricEnabled);
+  const workspacesResult = useCollectionSnapshot(queueWorkspacesCollection, electricEnabled);
+  const runStepsResult = useCollectionSnapshot(queueRunStepsCollection, electricEnabled);
+  const activityResult = useCollectionSnapshot(queueActivityCollection, electricEnabled);
+  const httpRunsResult = useCollectionSnapshot(queueHttpRuns.collection, httpEnabled);
+  const httpActivityResult = useCollectionSnapshot(queueHttpActivity.collection, httpEnabled);
 
   const status =
     source === "electric"
@@ -376,33 +358,30 @@ export function useAdminQueueLiveSlice(enabled: boolean, source: QueueDataSource
 
   const runs = useMemo(() => {
     if (source === "http") {
-      return httpRunsResult.data ?? [];
+      return httpRunsResult.rows;
     }
 
     return buildRunRecords({
-      blueprints: blueprintsResult.data ?? [],
-      dispatches: dispatchesResult.data ?? [],
-      projects: projectsResult.data ?? [],
-      runs: runsResult.data ?? [],
-      runSteps: runStepsResult.data ?? [],
-      workspaces: workspacesResult.data ?? [],
+      blueprints: blueprintsResult.rows,
+      dispatches: dispatchesResult.rows,
+      projects: projectsResult.rows,
+      runs: runsResult.rows,
+      runSteps: runStepsResult.rows,
+      workspaces: workspacesResult.rows,
     });
   }, [
-    blueprintsResult.data,
-    dispatchesResult.data,
-    httpRunsResult.data,
-    projectsResult.data,
-    runsResult.data,
-    runStepsResult.data,
+    blueprintsResult.rows,
+    dispatchesResult.rows,
+    httpRunsResult.rows,
+    projectsResult.rows,
+    runsResult.rows,
+    runStepsResult.rows,
     source,
-    workspacesResult.data,
+    workspacesResult.rows,
   ]);
   const activity = useMemo(
-    () =>
-      source === "http"
-        ? (httpActivityResult.data ?? [])
-        : buildActivityItems(activityResult.data ?? []),
-    [activityResult.data, httpActivityResult.data, source],
+    () => (source === "http" ? httpActivityResult.rows : buildActivityItems(activityResult.rows)),
+    [activityResult.rows, httpActivityResult.rows, source],
   );
 
   return {
@@ -416,6 +395,43 @@ export function useAdminQueueLiveSlice(enabled: boolean, source: QueueDataSource
     runs: RunRecord[];
     status: LoadStatus;
   };
+}
+
+function useCollectionSnapshot<T extends object, TKey extends string | number>(
+  collection: Collection<T, TKey>,
+  enabled: boolean,
+) {
+  const [snapshot, setSnapshot] = useState<{ rows: T[]; status: string }>({
+    rows: [],
+    status: "idle",
+  });
+
+  useEffect(() => {
+    if (!enabled) {
+      setSnapshot({ rows: [], status: "idle" });
+      return;
+    }
+
+    let cancelled = false;
+    const refreshSnapshot = () => {
+      if (!cancelled) {
+        setSnapshot({
+          rows: Array.from(collection.entries()).map(([, row]) => row),
+          status: collection.status,
+        });
+      }
+    };
+    const subscription = collection.subscribeChanges(refreshSnapshot);
+
+    refreshSnapshot();
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [collection, enabled]);
+
+  return snapshot;
 }
 
 function buildActivityItems(rows: QueueActivityRow[]): ActivityItem[] {

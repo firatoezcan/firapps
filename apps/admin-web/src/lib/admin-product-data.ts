@@ -1,4 +1,4 @@
-import { useLiveQuery, type Collection } from "@tanstack/react-db";
+import { type Collection } from "@tanstack/react-db";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -279,7 +279,7 @@ function useCollectionRows<T extends object>({
 }): CollectionRows<T> {
   const [status, setStatus] = useState<LoadStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const liveRows = useLiveQuery((query) => (enabled ? query.from({ row: collection }) : undefined));
+  const liveRows = useCollectionSnapshot(collection, enabled);
 
   const refresh = useCallback(async () => {
     setStatus("loading");
@@ -309,9 +309,40 @@ function useCollectionRows<T extends object>({
   return {
     error,
     refresh,
-    rows: enabled ? (liveRows.data ?? []) : [],
+    rows: enabled ? liveRows : [],
     status,
   };
+}
+
+function useCollectionSnapshot<T extends object, TKey extends string | number>(
+  collection: Collection<T, TKey>,
+  enabled: boolean,
+) {
+  const [rows, setRows] = useState<T[]>([]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setRows([]);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshRows = () => {
+      if (!cancelled) {
+        setRows(Array.from(collection.entries()).map(([, row]) => row));
+      }
+    };
+    const subscription = collection.subscribeChanges(refreshRows);
+
+    refreshRows();
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [collection, enabled]);
+
+  return rows;
 }
 
 export function useAdminProjects(enabled: boolean, scopeKey: string | null | undefined) {

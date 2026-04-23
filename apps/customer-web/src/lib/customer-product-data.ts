@@ -1,9 +1,4 @@
-import {
-  createCollection,
-  useLiveQuery,
-  type Collection,
-  type SyncConfig,
-} from "@tanstack/react-db";
+import { createCollection, type Collection, type SyncConfig } from "@tanstack/react-db";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -364,16 +359,12 @@ export async function clearCustomerRunnersSnapshot() {
 export function useCustomerPublicCatalogCollection(enabled = true) {
   usePreloadCollections(enabled, [customerProducts.collection, customerAnnouncements.collection]);
 
-  const productsResult = useLiveQuery((query) =>
-    enabled ? query.from({ product: customerProducts.collection }) : undefined,
-  );
-  const announcementsResult = useLiveQuery((query) =>
-    enabled ? query.from({ announcement: customerAnnouncements.collection }) : undefined,
-  );
+  const productsResult = useCollectionSnapshot(customerProducts.collection, enabled);
+  const announcementsResult = useCollectionSnapshot(customerAnnouncements.collection, enabled);
 
   return {
-    announcements: announcementsResult.data ?? [],
-    products: productsResult.data ?? [],
+    announcements: announcementsResult.rows,
+    products: productsResult.rows,
     status: resolveLiveStatus(enabled, [productsResult.status, announcementsResult.status]),
   };
 }
@@ -381,12 +372,10 @@ export function useCustomerPublicCatalogCollection(enabled = true) {
 export function useCustomerProjectsCollection(enabled: boolean) {
   usePreloadCollections(enabled, [customerProjects.collection]);
 
-  const projectsResult = useLiveQuery((query) =>
-    enabled ? query.from({ project: customerProjects.collection }) : undefined,
-  );
+  const projectsResult = useCollectionSnapshot(customerProjects.collection, enabled);
 
   return {
-    projects: projectsResult.data ?? [],
+    projects: projectsResult.rows,
     status: resolveLiveStatus(enabled, [projectsResult.status]),
   };
 }
@@ -394,13 +383,11 @@ export function useCustomerProjectsCollection(enabled: boolean) {
 export function useCustomerWorkspacesCollection(enabled: boolean) {
   usePreloadCollections(enabled, [customerWorkspaces.collection]);
 
-  const workspacesResult = useLiveQuery((query) =>
-    enabled ? query.from({ workspace: customerWorkspaces.collection }) : undefined,
-  );
+  const workspacesResult = useCollectionSnapshot(customerWorkspaces.collection, enabled);
 
   return {
     status: resolveLiveStatus(enabled, [workspacesResult.status]),
-    workspaces: workspacesResult.data ?? [],
+    workspaces: workspacesResult.rows,
   };
 }
 
@@ -412,25 +399,20 @@ export function useCustomerOperationsCollection(enabled: boolean) {
     customerMemberRuns.collection,
   ]);
 
-  const overviewResult = useLiveQuery((query) =>
-    enabled ? query.from({ overview: customerOverview.collection }) : undefined,
+  const overviewResult = useCollectionSnapshot(customerOverview.collection, enabled);
+  const activityResult = useCollectionSnapshot(customerActivity.collection, enabled);
+  const organizationRunsResult = useCollectionSnapshot(
+    customerOrganizationRuns.collection,
+    enabled,
   );
-  const activityResult = useLiveQuery((query) =>
-    enabled ? query.from({ activity: customerActivity.collection }) : undefined,
-  );
-  const organizationRunsResult = useLiveQuery((query) =>
-    enabled ? query.from({ run: customerOrganizationRuns.collection }) : undefined,
-  );
-  const memberRunsResult = useLiveQuery((query) =>
-    enabled ? query.from({ run: customerMemberRuns.collection }) : undefined,
-  );
-  const overview = useMemo(() => stripOverviewRow(overviewResult.data?.[0]), [overviewResult.data]);
+  const memberRunsResult = useCollectionSnapshot(customerMemberRuns.collection, enabled);
+  const overview = useMemo(() => stripOverviewRow(overviewResult.rows[0]), [overviewResult.rows]);
 
   return {
-    activity: activityResult.data ?? [],
-    organizationRuns: organizationRunsResult.data ?? [],
+    activity: activityResult.rows,
+    organizationRuns: organizationRunsResult.rows,
     overview,
-    runs: memberRunsResult.data ?? [],
+    runs: memberRunsResult.rows,
     status: resolveLiveStatus(enabled, [
       overviewResult.status,
       activityResult.status,
@@ -446,16 +428,15 @@ export function useCustomerMemberRunsCollection(enabled: boolean) {
     customerMemberRuns.collection,
   ]);
 
-  const organizationRunsResult = useLiveQuery((query) =>
-    enabled ? query.from({ run: customerOrganizationRuns.collection }) : undefined,
+  const organizationRunsResult = useCollectionSnapshot(
+    customerOrganizationRuns.collection,
+    enabled,
   );
-  const memberRunsResult = useLiveQuery((query) =>
-    enabled ? query.from({ run: customerMemberRuns.collection }) : undefined,
-  );
+  const memberRunsResult = useCollectionSnapshot(customerMemberRuns.collection, enabled);
 
   return {
-    organizationRuns: organizationRunsResult.data ?? [],
-    runs: memberRunsResult.data ?? [],
+    organizationRuns: organizationRunsResult.rows,
+    runs: memberRunsResult.rows,
     status: resolveLiveStatus(enabled, [organizationRunsResult.status, memberRunsResult.status]),
   };
 }
@@ -463,12 +444,10 @@ export function useCustomerMemberRunsCollection(enabled: boolean) {
 export function useCustomerRunDetailCollection(enabled: boolean, runId: string) {
   usePreloadCollections(enabled, [customerRunDetails.collection]);
 
-  const runDetailResult = useLiveQuery((query) =>
-    enabled ? query.from({ run: customerRunDetails.collection }) : undefined,
-  );
+  const runDetailResult = useCollectionSnapshot(customerRunDetails.collection, enabled);
   const run = useMemo(
-    () => runDetailResult.data?.find((candidate) => candidate.id === runId) ?? null,
-    [runDetailResult.data, runId],
+    () => runDetailResult.rows.find((candidate) => candidate.id === runId) ?? null,
+    [runDetailResult.rows, runId],
   );
 
   return {
@@ -480,14 +459,49 @@ export function useCustomerRunDetailCollection(enabled: boolean, runId: string) 
 export function useCustomerRunnersCollection(enabled: boolean) {
   usePreloadCollections(enabled, [customerRunners.collection]);
 
-  const runnersResult = useLiveQuery((query) =>
-    enabled ? query.from({ runner: customerRunners.collection }) : undefined,
-  );
+  const runnersResult = useCollectionSnapshot(customerRunners.collection, enabled);
 
   return {
-    runners: runnersResult.data ?? [],
+    runners: runnersResult.rows,
     status: resolveLiveStatus(enabled, [runnersResult.status]),
   };
+}
+
+function useCollectionSnapshot<T extends object, TKey extends string | number>(
+  collection: Collection<T, TKey>,
+  enabled: boolean,
+) {
+  const [snapshot, setSnapshot] = useState<{ rows: T[]; status: string }>({
+    rows: [],
+    status: "idle",
+  });
+
+  useEffect(() => {
+    if (!enabled) {
+      setSnapshot({ rows: [], status: "idle" });
+      return;
+    }
+
+    let cancelled = false;
+    const refreshSnapshot = () => {
+      if (!cancelled) {
+        setSnapshot({
+          rows: Array.from(collection.entries()).map(([, row]) => row),
+          status: collection.status,
+        });
+      }
+    };
+    const subscription = collection.subscribeChanges(refreshSnapshot);
+
+    refreshSnapshot();
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [collection, enabled]);
+
+  return snapshot;
 }
 
 function usePreloadCollections(
