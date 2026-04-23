@@ -29,15 +29,16 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import {
+  createAdminRunnerRegistration,
+  revokeAdminRunner,
+  useAdminRunners,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type LoadStatus,
   type RunnerRecord,
-  createRunnerRegistration,
   formatDate,
   formatRunnerStatus,
-  listRunners,
-  revokeRunner,
   runnerTone,
   toErrorMessage,
 } from "../lib/control-plane";
@@ -90,9 +91,11 @@ function RunnersRoute() {
   const canManageRunners = activeRole === "owner" || activeRole === "admin";
   const signInHandoff = buildCustomerSignInHref(getCurrentAdminPath("/runners"), "/runners");
 
-  const [runnerStatus, setRunnerStatus] = useState<LoadStatus>("idle");
-  const [runnerError, setRunnerError] = useState<string | null>(null);
-  const [runners, setRunners] = useState<RunnerRecord[]>([]);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const runnersQuery = useAdminRunners(productCollectionsEnabled, activeOrganization?.id);
+  const runnerStatus = runnersQuery.status;
+  const runnerError = runnersQuery.error;
+  const runners = runnersQuery.rows;
   const [form, setForm] = useState(defaultRunnerForm);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ message: string; tone: "danger" | "success" } | null>(
@@ -100,17 +103,6 @@ function RunnersRoute() {
   );
   const [createdKey, setCreatedKey] = useState<CreatedRunnerKey | null>(null);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setRunnerStatus("idle");
-      setRunnerError(null);
-      setRunners([]);
-      return;
-    }
-
-    void refreshRunners();
-  }, [activeOrganization?.id, session?.session.id]);
 
   useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
@@ -135,22 +127,7 @@ function RunnersRoute() {
   );
 
   async function refreshRunners() {
-    setRunnerStatus("loading");
-    setRunnerError(null);
-
-    try {
-      setRunners(await listRunners());
-      setRunnerStatus("ready");
-    } catch (caughtError) {
-      setRunnerStatus("error");
-      setRunnerError(
-        toErrorMessage(
-          caughtError,
-          "Unable to load runners. The runner API endpoints may still be owned by the backend lane.",
-        ),
-      );
-      setRunners([]);
-    }
+    await runnersQuery.refresh();
   }
 
   async function handleCreateRunner(event: FormEvent<HTMLFormElement>) {
@@ -165,7 +142,7 @@ function RunnersRoute() {
     setCreatedKey(null);
 
     try {
-      const result = await createRunnerRegistration({
+      const result = await createAdminRunnerRegistration({
         allowedOperations: parseLines(form.allowedOperations),
         displayName: form.displayName.trim(),
         maxConcurrency: Math.max(1, Number(form.maxConcurrency) || 1),
@@ -202,7 +179,6 @@ function RunnersRoute() {
         message: "Runner registration created. Copy the API key and install command now.",
         tone: "success",
       });
-      await refreshRunners();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to create runner registration."),
@@ -222,12 +198,11 @@ function RunnersRoute() {
     setNotice(null);
 
     try {
-      await revokeRunner(runner.id);
+      await revokeAdminRunner(runner.id);
       setNotice({
         message: `${runner.displayName} revoked. It should stop receiving new work after its next control-plane check.`,
         tone: "success",
       });
-      await refreshRunners();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to revoke runner."),

@@ -7,7 +7,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   AppPage,
@@ -22,10 +22,14 @@ import {
 } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
 
+import {
+  retryAdminRun,
+  useAdminBlueprints,
+  useAdminPullRequests,
+  useAdminRuns,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type Blueprint,
-  type LoadStatus,
   type PullRequestRecord,
   type RunRecord,
   canRetryRun,
@@ -36,11 +40,6 @@ import {
   getRunOperatorSummary,
   getRunPullRequestUrl,
   getRunStep,
-  normalizeBlueprints,
-  normalizePullRequests,
-  normalizeRuns,
-  requestInternalApi,
-  retryRun,
   runTone,
   statusTone,
   toErrorMessage,
@@ -62,39 +61,23 @@ function PullRequestsRoute() {
     ((activeMemberRoleQuery.data ?? null) as { role?: string } | null)?.role ?? null;
   const canManageRuns = activeRole === "owner" || activeRole === "admin";
 
-  const [pullRequestStatus, setPullRequestStatus] = useState<LoadStatus>("idle");
-  const [pullRequestError, setPullRequestError] = useState<string | null>(null);
-  const [pullRequests, setPullRequests] = useState<PullRequestRecord[]>([]);
-
-  const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
-  const [runError, setRunError] = useState<string | null>(null);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
-
-  const [blueprintError, setBlueprintError] = useState<string | null>(null);
-  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const pullRequestsQuery = useAdminPullRequests(productCollectionsEnabled, activeOrganization?.id);
+  const runsQuery = useAdminRuns(productCollectionsEnabled, activeOrganization?.id);
+  const blueprintsQuery = useAdminBlueprints(productCollectionsEnabled, activeOrganization?.id);
+  const pullRequestStatus = pullRequestsQuery.status;
+  const pullRequestError = pullRequestsQuery.error;
+  const pullRequests = pullRequestsQuery.rows;
+  const runStatus = runsQuery.status;
+  const runError = runsQuery.error;
+  const runs = runsQuery.rows;
+  const blueprintError = blueprintsQuery.error;
+  const blueprints = blueprintsQuery.rows;
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{
     message: string;
     tone: "danger" | "success";
   } | null>(null);
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setPullRequestStatus("idle");
-      setPullRequestError(null);
-      setPullRequests([]);
-      setRunStatus("idle");
-      setRunError(null);
-      setRuns([]);
-      setBlueprintError(null);
-      setBlueprints([]);
-      setRetryingRunId(null);
-      setNotice(null);
-      return;
-    }
-
-    void refreshEverything();
-  }, [activeOrganization?.id, session?.session.id]);
 
   const runById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
 
@@ -162,58 +145,11 @@ function PullRequestsRoute() {
   );
 
   async function refreshEverything() {
-    await Promise.all([refreshPullRequests(), refreshRuns(), refreshBlueprints()]);
-  }
-
-  async function refreshPullRequests() {
-    setPullRequestStatus("loading");
-    setPullRequestError(null);
-
-    try {
-      const payload = (await requestInternalApi("/pull-requests")) as {
-        pullRequests?: unknown[];
-      } | null;
-
-      setPullRequests(normalizePullRequests(payload?.pullRequests));
-      setPullRequestStatus("ready");
-    } catch (caughtError) {
-      setPullRequestStatus("error");
-      setPullRequestError(toErrorMessage(caughtError, "Unable to load pull request inventory."));
-      setPullRequests([]);
-    }
-  }
-
-  async function refreshRuns() {
-    setRunStatus("loading");
-    setRunError(null);
-
-    try {
-      const payload = (await requestInternalApi("/runs")) as {
-        runs?: unknown[];
-      } | null;
-
-      setRuns(normalizeRuns(payload?.runs));
-      setRunStatus("ready");
-    } catch (caughtError) {
-      setRunStatus("error");
-      setRunError(toErrorMessage(caughtError, "Unable to load run inventory."));
-      setRuns([]);
-    }
-  }
-
-  async function refreshBlueprints() {
-    setBlueprintError(null);
-
-    try {
-      const payload = (await requestInternalApi("/blueprints")) as {
-        blueprints?: unknown[];
-      } | null;
-
-      setBlueprints(normalizeBlueprints(payload?.blueprints));
-    } catch (caughtError) {
-      setBlueprintError(toErrorMessage(caughtError, "Unable to load blueprint registry."));
-      setBlueprints([]);
-    }
+    await Promise.all([
+      pullRequestsQuery.refresh(),
+      runsQuery.refresh(),
+      blueprintsQuery.refresh(),
+    ]);
   }
 
   async function handleRetryRun(run: RunRecord) {
@@ -221,7 +157,7 @@ function PullRequestsRoute() {
     setNotice(null);
 
     try {
-      const retriedRun = await retryRun(run.id);
+      const retriedRun = await retryAdminRun(run.id, run.tenantId);
 
       setNotice({
         message: retriedRun

@@ -330,64 +330,6 @@ export async function requestInternalApi(path: string, init: RequestInit = {}) {
   return response.json();
 }
 
-export async function listRunners() {
-  const payload = (await requestInternalApi("/runners")) as { runners?: unknown[] } | null;
-
-  return normalizeRunners(payload?.runners);
-}
-
-export async function createRunnerRegistration(input: RunnerRegistrationInput) {
-  const payload = (await requestInternalApi("/runners", {
-    body: JSON.stringify(input),
-    method: "POST",
-  })) as {
-    apiKey?: unknown;
-    controlPlaneUrl?: unknown;
-    control_plane_url?: unknown;
-    imageRef?: unknown;
-    image_ref?: unknown;
-    installCommand?: unknown;
-    install_command?: unknown;
-    runner?: unknown;
-  } | null;
-
-  const apiKey = typeof payload?.apiKey === "string" ? payload.apiKey : null;
-  const controlPlaneUrl =
-    typeof payload?.controlPlaneUrl === "string"
-      ? payload.controlPlaneUrl
-      : typeof payload?.control_plane_url === "string"
-        ? payload.control_plane_url
-        : null;
-  const imageRef =
-    typeof payload?.imageRef === "string"
-      ? payload.imageRef
-      : typeof payload?.image_ref === "string"
-        ? payload.image_ref
-        : null;
-  const installCommand =
-    typeof payload?.installCommand === "string"
-      ? payload.installCommand
-      : typeof payload?.install_command === "string"
-        ? payload.install_command
-        : null;
-
-  return {
-    apiKey,
-    controlPlaneUrl,
-    imageRef,
-    installCommand,
-    runner: normalizeRunner(payload?.runner, 0),
-  } satisfies RunnerRegistrationResult;
-}
-
-export async function revokeRunner(runnerId: string) {
-  const payload = (await requestInternalApi(`/runners/${encodeURIComponent(runnerId)}/revoke`, {
-    method: "POST",
-  })) as { runner?: unknown } | null;
-
-  return normalizeRunner(payload?.runner, 0);
-}
-
 async function readInternalApiError(response: Response) {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -978,14 +920,6 @@ export function getRunPullRequestUrl(run: RunRecord) {
 
 export function getRunStep(run: RunRecord, stepKey: string) {
   return run.steps?.find((step) => step.stepKey === stepKey) ?? null;
-}
-
-export async function retryRun(runId: string) {
-  const payload = (await requestInternalApi(`/runs/${encodeURIComponent(runId)}/retry`, {
-    method: "POST",
-  })) as { run?: unknown } | null;
-
-  return payload?.run ? normalizeRun(payload.run) : null;
 }
 
 export function canRetryRun(run: RunRecord) {

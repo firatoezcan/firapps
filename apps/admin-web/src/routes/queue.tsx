@@ -25,6 +25,7 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import { retryAdminRun } from "../lib/admin-product-data";
 import {
   type RuntimeCapacity,
   clearAdminQueueHttpSnapshot,
@@ -48,7 +49,6 @@ import {
   getRunOperatorSummary,
   getRunQueueStage,
   getRunRetryActionLabel,
-  retryRun,
   runTone,
   statusTone,
   toErrorMessage,
@@ -214,7 +214,7 @@ function QueueRoute() {
     setNotice(null);
 
     try {
-      const retriedRun = await retryRun(run.id);
+      const retriedRun = await retryAdminRun(run.id, run.tenantId);
 
       setNotice({
         message: retriedRun

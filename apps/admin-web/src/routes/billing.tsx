@@ -15,45 +15,22 @@ import {
 } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
 
+import {
+  updateAdminProject,
+  useAdminProjects,
+  useAdminUsage,
+  type UsageProject,
+  type UsageSummary,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type LoadStatus,
   type Project,
   formatCount,
   formatDate,
-  normalizeProjects,
-  requestInternalApi,
   tenantTone,
   toErrorMessage,
 } from "../lib/control-plane";
 import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
-
-type UsageProject = {
-  activeSeats: number;
-  billingEmail?: string | null;
-  billingPlan?: string | null;
-  billingReference?: string | null;
-  billingStatus?: string | null;
-  completedRuns: number;
-  computeMinutes: number;
-  id: string;
-  lastRunAt?: string | null;
-  name: string;
-  openPullRequests: number;
-  readyWorkspaces: number;
-  runCount: number;
-  seatLimit?: number | null;
-  slug: string;
-};
-
-type UsageSummary = {
-  activeSeats: number;
-  computeMinutes: number;
-  openPullRequests: number;
-  readyWorkspaces: number;
-  runCount: number;
-  seatLimit: number;
-};
 
 type BillingDraft = {
   billingEmail: string;
@@ -61,15 +38,6 @@ type BillingDraft = {
   billingReference: string;
   billingStatus: string;
   seatLimit: string;
-};
-
-const emptySummary: UsageSummary = {
-  activeSeats: 0,
-  computeMinutes: 0,
-  openPullRequests: 0,
-  readyWorkspaces: 0,
-  runCount: 0,
-  seatLimit: 0,
 };
 
 export const Route = createFileRoute("/billing")({
@@ -87,37 +55,21 @@ function BillingRoute() {
     ((activeMemberRoleQuery.data ?? null) as { role?: string } | null)?.role ?? null;
   const canManageBilling = activeRole === "owner" || activeRole === "admin";
 
-  const [projectStatus, setProjectStatus] = useState<LoadStatus>("idle");
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-
-  const [usageStatus, setUsageStatus] = useState<LoadStatus>("idle");
-  const [usageError, setUsageError] = useState<string | null>(null);
-  const [usageProjects, setUsageProjects] = useState<UsageProject[]>([]);
-  const [usageSummary, setUsageSummary] = useState<UsageSummary>(emptySummary);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const projectsQuery = useAdminProjects(productCollectionsEnabled, activeOrganization?.id);
+  const usageQuery = useAdminUsage(productCollectionsEnabled, activeOrganization?.id);
+  const projectStatus = projectsQuery.status;
+  const projectError = projectsQuery.error;
+  const projects = projectsQuery.rows;
+  const usageStatus = usageQuery.status;
+  const usageError = usageQuery.error;
+  const usageProjects = usageQuery.projects;
+  const usageSummary: UsageSummary = usageQuery.summary;
   const [drafts, setDrafts] = useState<Record<string, BillingDraft>>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ message: string; tone: "danger" | "success" } | null>(
     null,
   );
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setProjectStatus("idle");
-      setProjectError(null);
-      setProjects([]);
-      setUsageStatus("idle");
-      setUsageError(null);
-      setUsageProjects([]);
-      setUsageSummary(emptySummary);
-      setDrafts({});
-      setBusyAction(null);
-      setNotice(null);
-      return;
-    }
-
-    void refreshEverything();
-  }, [activeOrganization?.id, session?.session.id]);
 
   useEffect(() => {
     setDrafts(
@@ -154,46 +106,7 @@ function BillingRoute() {
   }, [projects, usageProjects]);
 
   async function refreshEverything() {
-    await Promise.all([refreshProjects(), refreshUsage()]);
-  }
-
-  async function refreshProjects() {
-    setProjectStatus("loading");
-    setProjectError(null);
-
-    try {
-      const payload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-
-      setProjects(normalizeProjects(payload?.projects));
-      setProjectStatus("ready");
-    } catch (caughtError) {
-      setProjectStatus("error");
-      setProjectError(toErrorMessage(caughtError, "Unable to load project billing data."));
-      setProjects([]);
-    }
-  }
-
-  async function refreshUsage() {
-    setUsageStatus("loading");
-    setUsageError(null);
-
-    try {
-      const payload = (await requestInternalApi("/usage")) as {
-        projects?: unknown[];
-        summary?: unknown;
-      } | null;
-
-      setUsageProjects(normalizeUsageProjects(payload?.projects));
-      setUsageSummary(normalizeUsageSummary(payload?.summary));
-      setUsageStatus("ready");
-    } catch (caughtError) {
-      setUsageStatus("error");
-      setUsageError(toErrorMessage(caughtError, "Unable to load usage summary."));
-      setUsageProjects([]);
-      setUsageSummary(emptySummary);
-    }
+    await Promise.all([projectsQuery.refresh(), usageQuery.refresh()]);
   }
 
   async function handleSaveBilling(project: Project) {
@@ -213,22 +126,18 @@ function BillingRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi(`/projects/${encodeURIComponent(project.id)}`, {
-        body: JSON.stringify({
-          billingEmail: emptyToNull(draft.billingEmail),
-          billingPlan: emptyToNull(draft.billingPlan),
-          billingReference: emptyToNull(draft.billingReference),
-          billingStatus: emptyToNull(draft.billingStatus),
-          seatLimit,
-        }),
-        method: "PATCH",
+      await updateAdminProject(project.id, {
+        billingEmail: emptyToNull(draft.billingEmail),
+        billingPlan: emptyToNull(draft.billingPlan),
+        billingReference: emptyToNull(draft.billingReference),
+        billingStatus: emptyToNull(draft.billingStatus),
+        seatLimit,
       });
 
       setNotice({
         message: `Billing placeholders saved for ${project.name}.`,
         tone: "success",
       });
-      await Promise.all([refreshProjects(), refreshUsage()]);
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to update billing placeholders."),
@@ -689,69 +598,6 @@ function validateSeatLimit(value: string) {
   } catch (error) {
     return toErrorMessage(error, "Seat limit is invalid.");
   }
-}
-
-function normalizeUsageProjects(entries: unknown): UsageProject[] {
-  if (!Array.isArray(entries)) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    activeSeats: readNumber(entry, "activeSeats") ?? 0,
-    billingEmail: readString(entry, "billingEmail") ?? readString(entry, "billing_email") ?? null,
-    billingPlan: readString(entry, "billingPlan") ?? readString(entry, "billing_plan") ?? null,
-    billingReference:
-      readString(entry, "billingReference") ?? readString(entry, "billing_reference") ?? null,
-    billingStatus:
-      readString(entry, "billingStatus") ?? readString(entry, "billing_status") ?? null,
-    completedRuns: readNumber(entry, "completedRuns") ?? readNumber(entry, "completed_runs") ?? 0,
-    computeMinutes:
-      readNumber(entry, "computeMinutes") ?? readNumber(entry, "compute_minutes") ?? 0,
-    id: readString(entry, "id") ?? `usage-project-${index}`,
-    lastRunAt: readString(entry, "lastRunAt") ?? readString(entry, "last_run_at") ?? null,
-    name: readString(entry, "name") ?? `Project ${index + 1}`,
-    openPullRequests:
-      readNumber(entry, "openPullRequests") ?? readNumber(entry, "open_pull_requests") ?? 0,
-    readyWorkspaces:
-      readNumber(entry, "readyWorkspaces") ?? readNumber(entry, "ready_workspaces") ?? 0,
-    runCount: readNumber(entry, "runCount") ?? readNumber(entry, "run_count") ?? 0,
-    seatLimit: readNumber(entry, "seatLimit") ?? readNumber(entry, "seat_limit") ?? null,
-    slug: readString(entry, "slug") ?? `project-${index + 1}`,
-  }));
-}
-
-function normalizeUsageSummary(entry: unknown): UsageSummary {
-  return {
-    activeSeats: readNumber(entry, "activeSeats") ?? 0,
-    computeMinutes:
-      readNumber(entry, "computeMinutes") ?? readNumber(entry, "compute_minutes") ?? 0,
-    openPullRequests:
-      readNumber(entry, "openPullRequests") ?? readNumber(entry, "open_pull_requests") ?? 0,
-    readyWorkspaces:
-      readNumber(entry, "readyWorkspaces") ?? readNumber(entry, "ready_workspaces") ?? 0,
-    runCount: readNumber(entry, "runCount") ?? readNumber(entry, "run_count") ?? 0,
-    seatLimit: readNumber(entry, "seatLimit") ?? readNumber(entry, "seat_limit") ?? 0,
-  };
-}
-
-function readString(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : null;
-}
-
-function readNumber(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
 }
 
 const inputClassName =

@@ -7,7 +7,7 @@ import {
   ShieldUser,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import {
   AppPage,
@@ -23,130 +23,10 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import { useAdminOperatorSnapshot } from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
-import {
-  type LoadStatus,
-  formatDate,
-  requestInternalApi,
-  runTone,
-  tenantTone,
-  toErrorMessage,
-} from "../lib/control-plane";
+import { formatDate, runTone, tenantTone } from "../lib/control-plane";
 import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
-
-type OperatorService = {
-  detail: string;
-  name: string;
-  status: string;
-};
-
-type OperatorOrganization = {
-  activeRuns: number;
-  failedRuns: number;
-  id: string;
-  memberCount: number;
-  name: string;
-  pendingInvitations: number;
-  projectCount: number;
-  readyWorkspaces: number;
-  slug: string;
-};
-
-type OperatorQueueItem = {
-  id: string;
-  projectId: string;
-  source: string;
-  status: string;
-  title: string;
-  updatedAt?: string | null;
-};
-
-type OperatorActivity = {
-  description: string;
-  id: string;
-  kind: string;
-  occurredAt?: string | null;
-  organizationId?: string | null;
-  runId?: string | null;
-  status: string;
-  tenantId?: string | null;
-  title: string;
-  workspaceRecordId?: string | null;
-};
-
-type OperatorFailure = {
-  failureMessage?: string | null;
-  id: string;
-  title: string;
-  updatedAt?: string | null;
-};
-
-type OperatorSummary = {
-  failedRuns: number;
-  organizations: number;
-  projects: number;
-  readyWorkspaces: number;
-  runs: number;
-};
-
-type OperatorRuntimeNode = {
-  name: string;
-  ready: boolean;
-  schedulable: boolean;
-  workspaceIdeReady: boolean;
-};
-
-type OperatorRuntimeWorkspaceFailure = {
-  workspaceId: string;
-  phase?: string | null;
-  failureReason?: string | null;
-  failureMessage?: string | null;
-};
-
-type OperatorRuntimeWorkspaceSummary = {
-  failed: number;
-  provisioning: number;
-  ready: number;
-  readyWorkspaceIdeNodes: number;
-  total: number;
-  workspaceIdeReadyNodes: number;
-};
-
-type OperatorRuntimeSnapshot = {
-  failedWorkspaces: OperatorRuntimeWorkspaceFailure[];
-  generatedAt?: string | null;
-  nodes: OperatorRuntimeNode[];
-  services: OperatorService[];
-  workspaceSummary: OperatorRuntimeWorkspaceSummary;
-};
-
-type OperatorSnapshot = {
-  generatedAt?: string | null;
-  organizations: OperatorOrganization[];
-  queue: OperatorQueueItem[];
-  recentActivity: OperatorActivity[];
-  recentFailures: OperatorFailure[];
-  runtime: OperatorRuntimeSnapshot | null;
-  services: OperatorService[];
-  summary: OperatorSummary;
-};
-
-const emptySnapshot: OperatorSnapshot = {
-  generatedAt: null,
-  organizations: [],
-  queue: [],
-  recentActivity: [],
-  recentFailures: [],
-  runtime: null,
-  services: [],
-  summary: {
-    failedRuns: 0,
-    organizations: 0,
-    projects: 0,
-    readyWorkspaces: 0,
-    runs: 0,
-  },
-};
 
 export const Route = createFileRoute("/operators")({
   component: OperatorsRoute,
@@ -158,20 +38,10 @@ function OperatorsRoute() {
   const session = sessionQuery.data;
   const signInHandoff = buildCustomerSignInHref(getCurrentAdminPath("/operators"), "/operators");
 
-  const [operatorStatus, setOperatorStatus] = useState<LoadStatus>("idle");
-  const [operatorError, setOperatorError] = useState<string | null>(null);
-  const [snapshot, setSnapshot] = useState<OperatorSnapshot>(emptySnapshot);
-
-  useEffect(() => {
-    if (!session) {
-      setOperatorStatus("idle");
-      setOperatorError(null);
-      setSnapshot(emptySnapshot);
-      return;
-    }
-
-    void refreshOperatorView();
-  }, [session?.session.id]);
+  const operatorQuery = useAdminOperatorSnapshot(Boolean(session), session?.session.id);
+  const operatorStatus = operatorQuery.status;
+  const operatorError = operatorQuery.error;
+  const snapshot = operatorQuery.snapshot;
 
   useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
@@ -185,19 +55,7 @@ function OperatorsRoute() {
   );
 
   async function refreshOperatorView() {
-    setOperatorStatus("loading");
-    setOperatorError(null);
-
-    try {
-      const payload = (await requestInternalApi("/operator")) as unknown;
-
-      setSnapshot(normalizeOperatorSnapshot(payload));
-      setOperatorStatus("ready");
-    } catch (caughtError) {
-      setOperatorStatus("error");
-      setOperatorError(toErrorMessage(caughtError, "Unable to load founder operator state."));
-      setSnapshot(emptySnapshot);
-    }
+    await operatorQuery.refresh();
   }
 
   return (
@@ -587,227 +445,4 @@ function OperatorField({ label, value }: { label: string; value: string }) {
       <p className="mt-1 font-medium text-foreground">{value}</p>
     </div>
   );
-}
-
-function normalizeOperatorSnapshot(entry: unknown): OperatorSnapshot {
-  return {
-    generatedAt: readString(entry, "generatedAt") ?? readString(entry, "generated_at") ?? null,
-    organizations: normalizeOperatorOrganizations(readArray(entry, "organizations")),
-    queue: normalizeQueueItems(readArray(entry, "queue")),
-    recentActivity: normalizeRecentActivity(readArray(entry, "recentActivity")),
-    recentFailures: normalizeRecentFailures(readArray(entry, "recentFailures")),
-    runtime: normalizeRuntimeSnapshot(readObject(entry, "runtime")),
-    services: normalizeServices(readArray(entry, "services")),
-    summary: normalizeSummary(readObject(entry, "summary")),
-  };
-}
-
-function normalizeRuntimeSnapshot(
-  entry: Record<string, unknown> | null,
-): OperatorRuntimeSnapshot | null {
-  if (!entry) {
-    return null;
-  }
-
-  return {
-    failedWorkspaces: normalizeFailedWorkspaces(readArray(entry, "failedWorkspaces")),
-    generatedAt: readString(entry, "generatedAt") ?? readString(entry, "generated_at") ?? null,
-    nodes: normalizeRuntimeNodes(readArray(entry, "nodes")),
-    services: normalizeServices(readArray(entry, "services")),
-    workspaceSummary: normalizeRuntimeWorkspaceSummary(readObject(entry, "workspaceSummary")),
-  };
-}
-
-function normalizeServices(entries: unknown[] | null): OperatorService[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    detail: readString(entry, "detail") ?? "",
-    name: readString(entry, "name") ?? `service-${index}`,
-    status: readString(entry, "status") ?? "unknown",
-  }));
-}
-
-function normalizeOperatorOrganizations(entries: unknown[] | null): OperatorOrganization[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    activeRuns: readNumber(entry, "activeRuns") ?? readNumber(entry, "active_runs") ?? 0,
-    failedRuns: readNumber(entry, "failedRuns") ?? readNumber(entry, "failed_runs") ?? 0,
-    id: readString(entry, "id") ?? `org-${index}`,
-    memberCount: readNumber(entry, "memberCount") ?? readNumber(entry, "member_count") ?? 0,
-    name: readString(entry, "name") ?? `Organization ${index + 1}`,
-    pendingInvitations:
-      readNumber(entry, "pendingInvitations") ?? readNumber(entry, "pending_invitations") ?? 0,
-    projectCount: readNumber(entry, "projectCount") ?? readNumber(entry, "project_count") ?? 0,
-    readyWorkspaces:
-      readNumber(entry, "readyWorkspaces") ?? readNumber(entry, "ready_workspaces") ?? 0,
-    slug: readString(entry, "slug") ?? `organization-${index + 1}`,
-  }));
-}
-
-function normalizeQueueItems(entries: unknown[] | null): OperatorQueueItem[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    id: readString(entry, "id") ?? `queue-${index}`,
-    projectId: readString(entry, "projectId") ?? readString(entry, "project_id") ?? "unknown",
-    source: readString(entry, "source") ?? "manual",
-    status: readString(entry, "status") ?? "unknown",
-    title: readString(entry, "title") ?? `Queue item ${index + 1}`,
-    updatedAt: readString(entry, "updatedAt") ?? readString(entry, "updated_at") ?? null,
-  }));
-}
-
-function normalizeRecentActivity(entries: unknown[] | null): OperatorActivity[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    description: readString(entry, "description") ?? "",
-    id: readString(entry, "id") ?? `activity-${index}`,
-    kind: readString(entry, "kind") ?? "event",
-    occurredAt: readString(entry, "occurredAt") ?? readString(entry, "occurred_at") ?? null,
-    organizationId:
-      readString(entry, "organizationId") ?? readString(entry, "organization_id") ?? null,
-    runId: readString(entry, "runId") ?? readString(entry, "run_id") ?? null,
-    status: readString(entry, "status") ?? "completed",
-    tenantId: readString(entry, "tenantId") ?? readString(entry, "tenant_id") ?? null,
-    title: readString(entry, "title") ?? `Activity ${index + 1}`,
-    workspaceRecordId:
-      readString(entry, "workspaceRecordId") ?? readString(entry, "workspace_record_id") ?? null,
-  }));
-}
-
-function normalizeRecentFailures(entries: unknown[] | null): OperatorFailure[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    failureMessage:
-      readString(entry, "failureMessage") ?? readString(entry, "failure_message") ?? null,
-    id: readString(entry, "id") ?? `failure-${index}`,
-    title: readString(entry, "title") ?? `Failure ${index + 1}`,
-    updatedAt: readString(entry, "updatedAt") ?? readString(entry, "updated_at") ?? null,
-  }));
-}
-
-function normalizeRuntimeNodes(entries: unknown[] | null): OperatorRuntimeNode[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    name: readString(entry, "name") ?? `node-${index}`,
-    ready: readBoolean(entry, "ready") ?? false,
-    schedulable: readBoolean(entry, "schedulable") ?? false,
-    workspaceIdeReady:
-      readBoolean(entry, "workspaceIdeReady") ?? readBoolean(entry, "workspace_ide_ready") ?? false,
-  }));
-}
-
-function normalizeFailedWorkspaces(entries: unknown[] | null): OperatorRuntimeWorkspaceFailure[] {
-  if (!entries) {
-    return [];
-  }
-
-  return entries.map((entry, index) => ({
-    failureMessage:
-      readString(entry, "failureMessage") ?? readString(entry, "failure_message") ?? null,
-    failureReason:
-      readString(entry, "failureReason") ?? readString(entry, "failure_reason") ?? null,
-    phase: readString(entry, "phase") ?? null,
-    workspaceId:
-      readString(entry, "workspaceId") ?? readString(entry, "workspace_id") ?? `workspace-${index}`,
-  }));
-}
-
-function normalizeRuntimeWorkspaceSummary(
-  entry: Record<string, unknown> | null,
-): OperatorRuntimeWorkspaceSummary {
-  return {
-    failed: readNumber(entry, "failed") ?? 0,
-    provisioning: readNumber(entry, "provisioning") ?? 0,
-    ready: readNumber(entry, "ready") ?? 0,
-    readyWorkspaceIdeNodes:
-      readNumber(entry, "readyWorkspaceIdeNodes") ??
-      readNumber(entry, "ready_workspace_ide_nodes") ??
-      0,
-    total: readNumber(entry, "total") ?? 0,
-    workspaceIdeReadyNodes:
-      readNumber(entry, "workspaceIdeReadyNodes") ??
-      readNumber(entry, "workspace_ide_ready_nodes") ??
-      0,
-  };
-}
-
-function normalizeSummary(entry: unknown): OperatorSummary {
-  return {
-    failedRuns: readNumber(entry, "failedRuns") ?? readNumber(entry, "failed_runs") ?? 0,
-    organizations: readNumber(entry, "organizations") ?? 0,
-    projects: readNumber(entry, "projects") ?? 0,
-    readyWorkspaces:
-      readNumber(entry, "readyWorkspaces") ?? readNumber(entry, "ready_workspaces") ?? 0,
-    runs: readNumber(entry, "runs") ?? 0,
-  };
-}
-
-function readString(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : null;
-}
-
-function readNumber(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
-}
-
-function readBoolean(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return typeof candidate === "boolean" ? candidate : null;
-}
-
-function readArray(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return Array.isArray(candidate) ? candidate : null;
-}
-
-function readObject(entry: unknown, key: string) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const candidate = (entry as Record<string, unknown>)[key];
-
-  return typeof candidate === "object" && candidate !== null
-    ? (candidate as Record<string, unknown>)
-    : null;
 }

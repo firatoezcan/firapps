@@ -25,29 +25,26 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import {
+  type AdminDeployment,
+  useAdminActivity,
+  useAdminDeployments,
+  useAdminOverview,
+  useAdminProjects,
+  useAdminWorkspacesForProject,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type ActivityItem,
-  type Deployment,
-  type LoadStatus,
   type Overview,
-  type Project,
   type Workspace,
   dispatchReadinessTone,
   deploymentTone,
   formatDate,
   getDispatchReadinessLabel,
-  normalizeActivity,
-  normalizeDeployments,
-  normalizeOverview,
-  normalizeProjects,
-  normalizeWorkspaces,
   projectHasRepositoryRegistration,
   projectIsDispatchReady,
-  requestInternalApi,
   statusTone,
   tenantTone,
-  toErrorMessage,
   workspaceTone,
 } from "../lib/control-plane";
 import { ControlPlaneNavigation, controlPlaneRouteGroups } from "../lib/control-plane-navigation";
@@ -56,16 +53,6 @@ export const Route = createFileRoute("/control-plane")({
   component: ControlPlaneRoute,
 });
 
-const emptyOverview: Overview = {
-  activeRuns: 0,
-  failedRuns: 0,
-  pendingInvitations: 0,
-  projectCount: 0,
-  readyWorkspaces: 0,
-  runCount: 0,
-  workspaceCount: 0,
-};
-
 function ControlPlaneRoute() {
   const sessionQuery = authClient.useSession();
   const activeOrganizationQuery = authClient.useActiveOrganization();
@@ -73,26 +60,45 @@ function ControlPlaneRoute() {
   const session = sessionQuery.data;
   const activeOrganization = activeOrganizationQuery.data ?? null;
 
-  const [projectStatus, setProjectStatus] = useState<LoadStatus>("idle");
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-
-  const [workspaceStatus, setWorkspaceStatus] = useState<LoadStatus>("idle");
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-
-  const [opsStatus, setOpsStatus] = useState<LoadStatus>("idle");
-  const [opsError, setOpsError] = useState<string | null>(null);
-  const [overview, setOverview] = useState<Overview>(emptyOverview);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
-  const [deployments, setDeployments] = useState<Deployment[]>([]);
-
   const [selectedProjectId, setSelectedProjectId] = useState("");
 
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const projectsQuery = useAdminProjects(productCollectionsEnabled, activeOrganization?.id);
+  const projects = projectsQuery.rows;
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+  const workspacesQuery = useAdminWorkspacesForProject(
+    productCollectionsEnabled && Boolean(selectedProject),
+    selectedProject,
+  );
+  const overviewQuery = useAdminOverview(productCollectionsEnabled, activeOrganization?.id);
+  const activityQuery = useAdminActivity(productCollectionsEnabled, activeOrganization?.id);
+  const deploymentsQuery = useAdminDeployments(productCollectionsEnabled, activeOrganization?.id);
+  const projectStatus = projectsQuery.status;
+  const projectError = projectsQuery.error;
+  const workspaceStatus = workspacesQuery.status;
+  const workspaceError = workspacesQuery.error;
+  const workspaces = workspacesQuery.rows as Workspace[];
+  const opsStatus =
+    overviewQuery.status === "error" ||
+    activityQuery.status === "error" ||
+    deploymentsQuery.status === "error"
+      ? "error"
+      : overviewQuery.status === "loading" ||
+          activityQuery.status === "loading" ||
+          deploymentsQuery.status === "loading"
+        ? "loading"
+        : overviewQuery.status === "ready" &&
+            activityQuery.status === "ready" &&
+            deploymentsQuery.status === "ready"
+          ? "ready"
+          : "idle";
+  const opsError = overviewQuery.error ?? activityQuery.error ?? deploymentsQuery.error;
+  const overview: Overview = overviewQuery.overview;
+  const activity = activityQuery.rows;
+  const deployments = deploymentsQuery.rows as AdminDeployment[];
   const repoRegisteredProjects = useMemo(
     () => projects.filter((project) => projectHasRepositoryRegistration(project)),
     [projects],
@@ -108,37 +114,6 @@ function ControlPlaneRoute() {
   );
 
   useEffect(() => {
-    if (!session) {
-      setProjectStatus("idle");
-      setProjectError(null);
-      setProjects([]);
-      return;
-    }
-
-    if (!activeOrganization?.id) {
-      setProjectStatus("ready");
-      setProjectError(null);
-      setProjects([]);
-      return;
-    }
-
-    void refreshProjects();
-  }, [activeOrganization?.id, session?.session.id]);
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setOpsStatus("idle");
-      setOpsError(null);
-      setOverview(emptyOverview);
-      setActivity([]);
-      setDeployments([]);
-      return;
-    }
-
-    void refreshOperations();
-  }, [activeOrganization?.id, session?.session.id]);
-
-  useEffect(() => {
     if (projects.length === 0) {
       setSelectedProjectId("");
       return;
@@ -152,93 +127,21 @@ function ControlPlaneRoute() {
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
-    if (!session || !activeOrganization?.id || !selectedProjectId) {
-      setWorkspaceStatus("idle");
-      setWorkspaceError(null);
-      setWorkspaces([]);
-      return;
-    }
-
-    void refreshWorkspaces(selectedProjectId);
-  }, [activeOrganization?.id, selectedProjectId, session?.session.id]);
-
-  useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
       window.location.replace(signInHandoff.href);
     }
   }, [session, sessionQuery.isPending, signInHandoff.href]);
 
-  async function refreshProjects() {
-    setProjectStatus("loading");
-    setProjectError(null);
-
-    try {
-      const payload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-
-      setProjects(normalizeProjects(payload?.projects));
-      setProjectStatus("ready");
-    } catch (error) {
-      setProjectStatus("error");
-      setProjectError(toErrorMessage(error, "Unable to load projects."));
-      setProjects([]);
-    }
-  }
-
-  async function refreshWorkspaces(projectId: string) {
-    setWorkspaceStatus("loading");
-    setWorkspaceError(null);
-
-    try {
-      const payload = (await requestInternalApi(
-        `/workspaces?tenantId=${encodeURIComponent(projectId)}`,
-      )) as { workspaces?: unknown[] } | null;
-
-      setWorkspaces(normalizeWorkspaces(payload?.workspaces));
-      setWorkspaceStatus("ready");
-    } catch (error) {
-      setWorkspaceStatus("error");
-      setWorkspaceError(toErrorMessage(error, "Unable to load workspace inventory."));
-      setWorkspaces([]);
-    }
-  }
-
-  async function refreshOperations() {
-    setOpsStatus("loading");
-    setOpsError(null);
-
-    try {
-      const [overviewPayload, activityPayload, deploymentsPayload] = await Promise.all([
-        requestInternalApi("/overview"),
-        requestInternalApi("/activity"),
-        requestInternalApi("/deployments"),
-      ]);
-
-      setOverview(normalizeOverview((overviewPayload as { overview?: unknown } | null)?.overview));
-      setActivity(
-        normalizeActivity((activityPayload as { activity?: unknown[] } | null)?.activity),
-      );
-      setDeployments(
-        normalizeDeployments(
-          (deploymentsPayload as { deployments?: unknown[] } | null)?.deployments,
-        ),
-      );
-      setOpsStatus("ready");
-    } catch (error) {
-      setOpsStatus("error");
-      setOpsError(toErrorMessage(error, "Unable to load overview, activity, or deployments."));
-      setOverview(emptyOverview);
-      setActivity([]);
-      setDeployments([]);
-    }
-  }
-
   async function refreshEverything() {
-    await Promise.all([refreshProjects(), refreshOperations()]);
+    await Promise.all([
+      projectsQuery.refresh(),
+      overviewQuery.refresh(),
+      activityQuery.refresh(),
+      deploymentsQuery.refresh(),
+    ]);
 
     if (selectedProjectId) {
-      await refreshWorkspaces(selectedProjectId);
+      await workspacesQuery.refresh();
     }
   }
 

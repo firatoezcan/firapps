@@ -27,13 +27,21 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import {
+  createAdminRun,
+  createAdminSidechannelDispatch,
+  retryAdminRun,
+  useAdminActivity,
+  useAdminBlueprints,
+  useAdminOverview,
+  useAdminProjects,
+  useAdminRunDetail,
+  useAdminRuns,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
   type ActivityItem,
-  type Blueprint,
-  type LoadStatus,
   type Overview,
-  type Project,
   type RunArtifact,
   type RunEvent,
   type RunRecord,
@@ -44,14 +52,6 @@ import {
   getRunOperatorSummary,
   getRunPullRequestUrl,
   getRunRetryActionLabel,
-  normalizeActivity,
-  normalizeBlueprints,
-  normalizeOverview,
-  normalizeProjects,
-  normalizeRun,
-  normalizeRuns,
-  requestInternalApi,
-  retryRun,
   runTone,
   statusTone,
   tenantTone,
@@ -63,16 +63,6 @@ import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
 export const Route = createFileRoute("/runs")({
   component: RunsRoute,
 });
-
-const emptyOverview: Overview = {
-  activeRuns: 0,
-  failedRuns: 0,
-  pendingInvitations: 0,
-  projectCount: 0,
-  readyWorkspaces: 0,
-  runCount: 0,
-  workspaceCount: 0,
-};
 
 const defaultRunForm = {
   objective: "",
@@ -87,102 +77,6 @@ const defaultSidechannelForm = {
   title: "",
   webhookSecret: "",
 };
-
-async function requestSlackStyleSidechannelDispatch({
-  blueprintSlug,
-  channelName,
-  objective,
-  organizationSlug,
-  projectSlug,
-  requestedByName,
-  title,
-  userId,
-  webhookSecret,
-}: {
-  blueprintSlug: string;
-  channelName: string;
-  objective: string;
-  organizationSlug: string;
-  projectSlug: string;
-  requestedByName: string;
-  title: string;
-  userId: string;
-  webhookSecret: string;
-}) {
-  const responseUrl =
-    typeof window !== "undefined"
-      ? new URL("/hooks/slack/mock", window.location.origin).toString()
-      : "/hooks/slack/mock";
-  const response = await fetch("/api/internal/dispatch/slack", {
-    body: new URLSearchParams({
-      channel_id: "CDEVBOXES",
-      channel_name: channelName,
-      command: "/dispatch",
-      response_url: responseUrl,
-      team_domain: "firapps-local",
-      team_id: "TLOCAL",
-      text: [
-        `organization=${organizationSlug}`,
-        `project=${projectSlug}`,
-        `blueprint=${blueprintSlug}`,
-        `title=${title}`,
-        `objective=${objective}`,
-      ].join(";"),
-      trigger_id: `trigger-${Date.now()}`,
-      user_id: userId,
-      user_name: requestedByName,
-    }),
-    credentials: "include",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      "x-firapps-dispatch-secret": webhookSecret,
-    },
-    method: "POST",
-  });
-
-  if (response.status === 401) {
-    throw new Error("Internal API rejected the current Better Auth session.");
-  }
-
-  if (response.status === 403) {
-    throw new Error("Internal API denied access for the current session.");
-  }
-
-  if (!response.ok) {
-    const contentType = response.headers.get("content-type") ?? "";
-
-    try {
-      if (contentType.includes("application/json")) {
-        const payload = (await response.json()) as { error?: string; message?: string };
-        const detail = payload.message ?? payload.error ?? JSON.stringify(payload);
-
-        throw new Error(`Internal API returned ${response.status}: ${detail}`);
-      }
-
-      const detail = (await response.text()).trim();
-
-      throw new Error(
-        detail
-          ? `Internal API returned ${response.status}: ${detail}`
-          : `Internal API returned ${response.status}.`,
-      );
-    } catch (caughtError) {
-      if (caughtError instanceof Error) {
-        throw caughtError;
-      }
-
-      throw new Error(`Internal API returned ${response.status}.`);
-    }
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-
-  if (!contentType.includes("application/json")) {
-    return null;
-  }
-
-  return response.json();
-}
 
 function RunsRoute() {
   const location = useLocation();
@@ -205,27 +99,6 @@ function RunsRoute() {
     ((activeMemberRoleQuery.data ?? null) as { role?: string } | null)?.role ?? null;
   const canDispatchRuns = activeRole === "owner" || activeRole === "admin";
 
-  const [, setProjectStatus] = useState<LoadStatus>("idle");
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-
-  const [, setBlueprintStatus] = useState<LoadStatus>("idle");
-  const [blueprintError, setBlueprintError] = useState<string | null>(null);
-  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
-
-  const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
-  const [runError, setRunError] = useState<string | null>(null);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
-
-  const [detailStatus, setDetailStatus] = useState<LoadStatus>("idle");
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
-
-  const [opsStatus, setOpsStatus] = useState<LoadStatus>("idle");
-  const [opsError, setOpsError] = useState<string | null>(null);
-  const [overview, setOverview] = useState<Overview>(emptyOverview);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
-
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedBlueprintId, setSelectedBlueprintId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
@@ -239,6 +112,42 @@ function RunsRoute() {
   } | null>(null);
   const [form, setForm] = useState(defaultRunForm);
   const [sidechannelForm, setSidechannelForm] = useState(defaultSidechannelForm);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const projectsQuery = useAdminProjects(productCollectionsEnabled, activeOrganization?.id);
+  const blueprintsQuery = useAdminBlueprints(productCollectionsEnabled, activeOrganization?.id);
+  const runsQuery = useAdminRuns(
+    productCollectionsEnabled,
+    activeOrganization?.id,
+    selectedProjectId || undefined,
+  );
+  const detailQuery = useAdminRunDetail(
+    productCollectionsEnabled && Boolean(selectedRunId),
+    activeOrganization?.id,
+    selectedRunId,
+  );
+  const overviewQuery = useAdminOverview(productCollectionsEnabled, activeOrganization?.id);
+  const activityQuery = useAdminActivity(productCollectionsEnabled, activeOrganization?.id);
+  const projectError = projectsQuery.error;
+  const projects = projectsQuery.rows;
+  const blueprintError = blueprintsQuery.error;
+  const blueprints = blueprintsQuery.rows;
+  const runStatus = runsQuery.status;
+  const runError = runsQuery.error;
+  const runs = runsQuery.rows;
+  const detailStatus = detailQuery.status;
+  const detailError = detailQuery.error;
+  const selectedRun = detailQuery.run;
+  const opsStatus =
+    overviewQuery.status === "error" || activityQuery.status === "error"
+      ? "error"
+      : overviewQuery.status === "loading" || activityQuery.status === "loading"
+        ? "loading"
+        : overviewQuery.status === "ready" && activityQuery.status === "ready"
+          ? "ready"
+          : "idle";
+  const opsError = overviewQuery.error ?? activityQuery.error;
+  const overview: Overview = overviewQuery.overview;
+  const activity: ActivityItem[] = activityQuery.rows;
 
   if (location.pathname !== "/runs") {
     return <Outlet />;
@@ -254,30 +163,6 @@ function RunsRoute() {
   );
   const selectedRunPullRequestUrl = selectedRun ? getRunPullRequestUrl(selectedRun) : null;
   const signInHandoff = buildCustomerSignInHref(getCurrentAdminPath("/runs"), "/runs");
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setProjectStatus("idle");
-      setProjectError(null);
-      setProjects([]);
-      setBlueprintStatus("idle");
-      setBlueprintError(null);
-      setBlueprints([]);
-      setRunStatus("idle");
-      setRunError(null);
-      setRuns([]);
-      setDetailStatus("idle");
-      setDetailError(null);
-      setSelectedRun(null);
-      setOpsStatus("idle");
-      setOpsError(null);
-      setOverview(emptyOverview);
-      setActivity([]);
-      return;
-    }
-
-    void refreshReferenceData();
-  }, [activeOrganization?.id, session?.session.id]);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -348,19 +233,8 @@ function RunsRoute() {
   }, [appliedHandoffBlueprintId, blueprints, handoffSearch.blueprintId]);
 
   useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      return;
-    }
-
-    void refreshRuns(selectedProjectId || undefined);
-  }, [activeOrganization?.id, selectedProjectId, session?.session.id]);
-
-  useEffect(() => {
     if (runs.length === 0) {
       setSelectedRunId("");
-      setSelectedRun(null);
-      setDetailStatus("idle");
-      setDetailError(null);
       return;
     }
 
@@ -370,14 +244,6 @@ function RunsRoute() {
       setSelectedRunId(runs[0]?.id ?? "");
     }
   }, [runs, selectedRunId]);
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id || !selectedRunId) {
-      return;
-    }
-
-    void refreshRunDetail(selectedRunId);
-  }, [activeOrganization?.id, selectedRunId, session?.session.id]);
 
   useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
@@ -425,117 +291,19 @@ function RunsRoute() {
   }, [selectedProject?.id, selectedProject?.name]);
 
   async function refreshReferenceData() {
-    await Promise.all([refreshProjects(), refreshBlueprints(), refreshOperations()]);
-  }
-
-  async function refreshProjects() {
-    setProjectStatus("loading");
-    setProjectError(null);
-
-    try {
-      const payload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-
-      setProjects(normalizeProjects(payload?.projects));
-      setProjectStatus("ready");
-    } catch (caughtError) {
-      setProjectStatus("error");
-      setProjectError(toErrorMessage(caughtError, "Unable to load projects."));
-      setProjects([]);
-    }
-  }
-
-  async function refreshBlueprints() {
-    setBlueprintStatus("loading");
-    setBlueprintError(null);
-
-    try {
-      const payload = (await requestInternalApi("/blueprints")) as {
-        blueprints?: unknown[];
-      } | null;
-
-      setBlueprints(normalizeBlueprints(payload?.blueprints));
-      setBlueprintStatus("ready");
-    } catch (caughtError) {
-      setBlueprintStatus("error");
-      setBlueprintError(toErrorMessage(caughtError, "Unable to load blueprints."));
-      setBlueprints([]);
-    }
-  }
-
-  async function refreshRuns(projectId?: string) {
-    setRunStatus("loading");
-    setRunError(null);
-
-    try {
-      const searchParams = new URLSearchParams();
-
-      if (projectId) {
-        searchParams.set("tenantId", projectId);
-      }
-
-      const payload = (await requestInternalApi(
-        `/runs${searchParams.size > 0 ? `?${searchParams.toString()}` : ""}`,
-      )) as { runs?: unknown[] } | null;
-
-      setRuns(normalizeRuns(payload?.runs));
-      setRunStatus("ready");
-    } catch (caughtError) {
-      setRunStatus("error");
-      setRunError(toErrorMessage(caughtError, "Unable to load runs."));
-      setRuns([]);
-    }
-  }
-
-  async function refreshRunDetail(runId: string) {
-    setDetailStatus("loading");
-    setDetailError(null);
-
-    try {
-      const payload = (await requestInternalApi(`/runs/${encodeURIComponent(runId)}`)) as {
-        run?: unknown;
-      } | null;
-
-      const detail = payload?.run ? normalizeRun(payload.run) : null;
-
-      setSelectedRun(detail);
-      setDetailStatus("ready");
-    } catch (caughtError) {
-      setDetailStatus("error");
-      setDetailError(toErrorMessage(caughtError, "Unable to load run detail."));
-      setSelectedRun(null);
-    }
-  }
-
-  async function refreshOperations() {
-    setOpsStatus("loading");
-    setOpsError(null);
-
-    try {
-      const [overviewPayload, activityPayload] = await Promise.all([
-        requestInternalApi("/overview"),
-        requestInternalApi("/activity"),
-      ]);
-
-      setOverview(normalizeOverview((overviewPayload as { overview?: unknown } | null)?.overview));
-      setActivity(
-        normalizeActivity((activityPayload as { activity?: unknown[] } | null)?.activity),
-      );
-      setOpsStatus("ready");
-    } catch (caughtError) {
-      setOpsStatus("error");
-      setOpsError(toErrorMessage(caughtError, "Unable to load overview or activity."));
-      setOverview(emptyOverview);
-      setActivity([]);
-    }
+    await Promise.all([
+      projectsQuery.refresh(),
+      blueprintsQuery.refresh(),
+      overviewQuery.refresh(),
+      activityQuery.refresh(),
+    ]);
   }
 
   async function refreshEverything() {
-    await Promise.all([refreshReferenceData(), refreshRuns(selectedProjectId || undefined)]);
+    await Promise.all([refreshReferenceData(), runsQuery.refresh()]);
 
     if (selectedRunId) {
-      await refreshRunDetail(selectedRunId);
+      await detailQuery.refresh();
     }
   }
 
@@ -552,18 +320,16 @@ function RunsRoute() {
     setNotice(null);
 
     try {
-      const payload = (await requestInternalApi("/runs", {
-        body: JSON.stringify({
+      const createdRun = await createAdminRun(
+        {
           blueprintId: selectedBlueprintId || null,
           objective: form.objective.trim(),
           source: form.source,
           tenantId: selectedProjectId,
           title: form.title.trim(),
-        }),
-        method: "POST",
-      })) as { run?: unknown } | null;
-
-      const createdRun = payload?.run ? normalizeRun(payload.run) : null;
+        },
+        selectedProjectId,
+      );
 
       setNotice({
         message: "Run dispatched into the isolated devbox pipeline.",
@@ -573,12 +339,9 @@ function RunsRoute() {
         ...defaultRunForm,
         title: selectedProject ? `Implement work for ${selectedProject.name}` : "",
       });
-      await Promise.all([refreshRuns(selectedProjectId), refreshOperations()]);
 
       if (createdRun) {
         setSelectedRunId(createdRun.id);
-        setSelectedRun(createdRun);
-        setDetailStatus("ready");
       }
     } catch (caughtError) {
       setNotice({
@@ -634,22 +397,24 @@ function RunsRoute() {
     setNotice(null);
 
     try {
-      const payload = (await requestSlackStyleSidechannelDispatch({
-        blueprintSlug: selectedBlueprint.slug,
-        channelName: sidechannelForm.channelName.trim() || "launch-ops",
-        objective: sidechannelForm.objective.trim(),
-        organizationSlug: activeOrganization.slug,
-        projectSlug: selectedProject.slug,
-        requestedByName:
-          sidechannelForm.requestedByName.trim() ||
-          session?.user.name?.trim() ||
-          session?.user.email ||
-          "Operator",
-        title: sidechannelForm.title.trim(),
-        userId: session?.user.id ?? "ULOCAL",
-        webhookSecret: sidechannelForm.webhookSecret.trim(),
-      })) as { run?: unknown } | null;
-      const createdRun = payload?.run ? normalizeRun(payload.run) : null;
+      const createdRun = await createAdminSidechannelDispatch(
+        {
+          blueprintSlug: selectedBlueprint.slug,
+          channelName: sidechannelForm.channelName.trim() || "launch-ops",
+          objective: sidechannelForm.objective.trim(),
+          organizationSlug: activeOrganization.slug,
+          projectSlug: selectedProject.slug,
+          requestedByName:
+            sidechannelForm.requestedByName.trim() ||
+            session?.user.name?.trim() ||
+            session?.user.email ||
+            "Operator",
+          title: sidechannelForm.title.trim(),
+          userId: session?.user.id ?? "ULOCAL",
+          webhookSecret: sidechannelForm.webhookSecret.trim(),
+        },
+        selectedProjectId,
+      );
 
       setNotice({
         message: "Slack-style sidechannel dispatch accepted.",
@@ -660,12 +425,9 @@ function RunsRoute() {
         objective: "",
         title: selectedProject ? `Slack dispatch for ${selectedProject.name}` : "",
       }));
-      await Promise.all([refreshRuns(selectedProjectId), refreshOperations()]);
 
       if (createdRun) {
         setSelectedRunId(createdRun.id);
-        setSelectedRun(createdRun);
-        setDetailStatus("ready");
       }
     } catch (caughtError) {
       setNotice({
@@ -682,7 +444,7 @@ function RunsRoute() {
     setNotice(null);
 
     try {
-      const retriedRun = await retryRun(run.id);
+      const retriedRun = await retryAdminRun(run.id, run.tenantId);
 
       setNotice({
         message: retriedRun
@@ -692,11 +454,9 @@ function RunsRoute() {
       });
 
       setSelectedProjectId(run.tenantId);
-      await Promise.all([refreshRuns(run.tenantId), refreshOperations()]);
 
       if (retriedRun) {
         setSelectedRunId(retriedRun.id);
-        await refreshRunDetail(retriedRun.id);
       }
     } catch (caughtError) {
       setNotice({

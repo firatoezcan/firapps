@@ -28,9 +28,9 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import { retryAdminRun, useAdminRunDetail } from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type LoadStatus,
   type RunArtifact,
   type RunEvent,
   type RunRecord,
@@ -41,9 +41,6 @@ import {
   getRunOperatorSummary,
   getRunPullRequestUrl,
   getRunRetryActionLabel,
-  normalizeRun,
-  requestInternalApi,
-  retryRun,
   runTone,
   statusTone,
   toErrorMessage,
@@ -72,9 +69,15 @@ function RunDetailRoute() {
     `/runs/${params.runId}`,
   );
 
-  const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
-  const [runError, setRunError] = useState<string | null>(null);
-  const [run, setRun] = useState<RunRecord | null>(null);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const runQuery = useAdminRunDetail(
+    productCollectionsEnabled,
+    activeOrganization?.id,
+    params.runId,
+  );
+  const runStatus = runQuery.status;
+  const runError = runQuery.error;
+  const run = runQuery.run;
   const [notice, setNotice] = useState<{
     message: string;
     tone: "danger" | "success";
@@ -83,38 +86,13 @@ function RunDetailRoute() {
   const outcomeSummary = run ? getRunOutcomeSummary(run) : null;
 
   useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setRunStatus("idle");
-      setRunError(null);
-      setRun(null);
-      return;
-    }
-
-    void loadRunDetail();
-  }, [activeOrganization?.id, params.runId, session?.session.id]);
-
-  useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
       window.location.replace(signInHandoff.href);
     }
   }, [session, sessionQuery.isPending, signInHandoff.href]);
 
   async function loadRunDetail() {
-    setRunStatus("loading");
-    setRunError(null);
-
-    try {
-      const payload = (await requestInternalApi(`/runs/${encodeURIComponent(params.runId)}`)) as {
-        run?: unknown;
-      } | null;
-
-      setRun(payload?.run ? normalizeRun(payload.run) : null);
-      setRunStatus("ready");
-    } catch (caughtError) {
-      setRunStatus("error");
-      setRunError(toErrorMessage(caughtError, "Unable to load run detail."));
-      setRun(null);
-    }
+    await runQuery.refresh();
   }
 
   async function handleRetryRun(selectedRun: RunRecord) {
@@ -122,7 +100,7 @@ function RunDetailRoute() {
     setNotice(null);
 
     try {
-      const retriedRun = await retryRun(selectedRun.id);
+      const retriedRun = await retryAdminRun(selectedRun.id, selectedRun.tenantId);
 
       setNotice({
         message: retriedRun
@@ -132,7 +110,6 @@ function RunDetailRoute() {
       });
 
       if (retriedRun) {
-        setRun(retriedRun);
         await navigate({
           params: {
             runId: retriedRun.id,

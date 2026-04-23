@@ -28,15 +28,17 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import {
+  createAdminBlueprint,
+  deleteAdminBlueprint,
+  updateAdminBlueprint,
+  useAdminBlueprints,
+  useAdminProjects,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
   type Blueprint,
-  type LoadStatus,
-  type Project,
   formatDateWithRelative,
-  normalizeBlueprints,
-  normalizeProjects,
-  requestInternalApi,
   statusTone,
   tenantTone,
   toErrorMessage,
@@ -66,14 +68,17 @@ function BlueprintsRoute() {
   const canManageBlueprints = activeRole === "owner" || activeRole === "admin";
   const signInHandoff = buildCustomerSignInHref(getCurrentAdminPath("/blueprints"), "/blueprints");
 
-  const [blueprintStatus, setBlueprintStatus] = useState<LoadStatus>("idle");
-  const [blueprintError, setBlueprintError] = useState<string | null>(null);
-  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const blueprintsQuery = useAdminBlueprints(productCollectionsEnabled, activeOrganization?.id);
+  const projectsQuery = useAdminProjects(productCollectionsEnabled, activeOrganization?.id);
+  const blueprintStatus = blueprintsQuery.status;
+  const blueprintError = blueprintsQuery.error;
+  const blueprints = blueprintsQuery.rows;
   const [archivedBlueprints, setArchivedBlueprints] = useState<Blueprint[]>([]);
 
-  const [projectStatus, setProjectStatus] = useState<LoadStatus>("idle");
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const projectStatus = projectsQuery.status;
+  const projectError = projectsQuery.error;
+  const projects = projectsQuery.rows;
 
   const [selectedBlueprintId, setSelectedBlueprintId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -127,21 +132,6 @@ function BlueprintsRoute() {
         : 0,
     [projects, selectedBlueprint],
   );
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setBlueprintStatus("idle");
-      setBlueprintError(null);
-      setBlueprints([]);
-      setArchivedBlueprints([]);
-      setProjectStatus("idle");
-      setProjectError(null);
-      setProjects([]);
-      return;
-    }
-
-    void refreshEverything();
-  }, [activeOrganization?.id, session?.session.id]);
 
   useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
@@ -211,50 +201,17 @@ function BlueprintsRoute() {
   }, [editForm.name, editSlugDirty]);
 
   async function refreshEverything() {
-    await Promise.all([refreshBlueprints(), refreshProjects()]);
-  }
+    const [nextBlueprints] = await Promise.all([
+      blueprintsQuery.refresh(),
+      projectsQuery.refresh(),
+    ]);
 
-  async function refreshBlueprints() {
-    setBlueprintStatus("loading");
-    setBlueprintError(null);
-
-    try {
-      const payload = (await requestInternalApi("/blueprints")) as {
-        blueprints?: unknown[];
-      } | null;
-      const nextBlueprints = normalizeBlueprints(payload?.blueprints);
-
-      setBlueprints(nextBlueprints);
-      setArchivedBlueprints((current) =>
-        current.filter(
-          (archivedBlueprint) =>
-            !nextBlueprints.some((blueprint) => blueprint.id === archivedBlueprint.id),
-        ),
-      );
-      setBlueprintStatus("ready");
-    } catch (caughtError) {
-      setBlueprintStatus("error");
-      setBlueprintError(toErrorMessage(caughtError, "Unable to load blueprints."));
-      setBlueprints([]);
-    }
-  }
-
-  async function refreshProjects() {
-    setProjectStatus("loading");
-    setProjectError(null);
-
-    try {
-      const payload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-
-      setProjects(normalizeProjects(payload?.projects));
-      setProjectStatus("ready");
-    } catch (caughtError) {
-      setProjectStatus("error");
-      setProjectError(toErrorMessage(caughtError, "Unable to load projects."));
-      setProjects([]);
-    }
+    setArchivedBlueprints((current) =>
+      current.filter(
+        (archivedBlueprint) =>
+          !nextBlueprints.some((blueprint) => blueprint.id === archivedBlueprint.id),
+      ),
+    );
   }
 
   async function handleCreateBlueprint() {
@@ -268,18 +225,13 @@ function BlueprintsRoute() {
         .filter((line) => line.length > 0)
         .map(parseStepLine);
 
-      const payload = (await requestInternalApi("/blueprints", {
-        body: JSON.stringify({
-          description: form.description.trim(),
-          name: form.name.trim(),
-          slug: form.slug.trim(),
-          steps,
-          triggerSource: form.triggerSource,
-        }),
-        method: "POST",
-      })) as { blueprint?: unknown } | null;
-
-      const created = normalizeBlueprints(payload?.blueprint ? [payload.blueprint] : [])[0];
+      const created = await createAdminBlueprint({
+        description: form.description.trim(),
+        name: form.name.trim(),
+        slug: form.slug.trim(),
+        steps,
+        triggerSource: form.triggerSource,
+      });
 
       setNotice({
         message: "Blueprint created.",
@@ -293,7 +245,6 @@ function BlueprintsRoute() {
         triggerSource: "manual",
       });
       setSlugDirty(false);
-      await refreshBlueprints();
 
       if (created?.id) {
         setSelectedBlueprintId(created.id);
@@ -317,22 +268,18 @@ function BlueprintsRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi(`/blueprints/${encodeURIComponent(selectedBlueprint.id)}`, {
-        body: JSON.stringify({
-          description: editForm.description.trim(),
-          name: editForm.name.trim(),
-          slug: editForm.slug.trim(),
-          steps: parseSteps(editForm.steps),
-          triggerSource: editForm.triggerSource,
-        }),
-        method: "PATCH",
+      await updateAdminBlueprint(selectedBlueprint.id, {
+        description: editForm.description.trim(),
+        name: editForm.name.trim(),
+        slug: editForm.slug.trim(),
+        steps: parseSteps(editForm.steps),
+        triggerSource: editForm.triggerSource,
       });
 
       setNotice({
         message: `Blueprint ${editForm.name.trim()} updated.`,
         tone: "success",
       });
-      await refreshBlueprints();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to update blueprint."),
@@ -360,9 +307,7 @@ function BlueprintsRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi(`/blueprints/${encodeURIComponent(blueprint.id)}`, {
-        method: "DELETE",
-      });
+      await deleteAdminBlueprint(blueprint.id);
 
       setArchivedBlueprints((current) => [
         {
@@ -376,7 +321,6 @@ function BlueprintsRoute() {
         message: `Blueprint ${blueprint.name} archived.`,
         tone: "success",
       });
-      await Promise.all([refreshBlueprints(), refreshProjects()]);
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to archive blueprint."),
@@ -396,20 +340,15 @@ function BlueprintsRoute() {
     setNotice(null);
 
     try {
-      const payload = (await requestInternalApi(`/blueprints/${encodeURIComponent(blueprint.id)}`, {
-        body: JSON.stringify({
-          isActive: true,
-        }),
-        method: "PATCH",
-      })) as { blueprint?: unknown } | null;
-      const reactivated = normalizeBlueprints(payload?.blueprint ? [payload.blueprint] : [])[0];
+      const reactivated = await updateAdminBlueprint(blueprint.id, {
+        isActive: true,
+      });
 
       setArchivedBlueprints((current) => current.filter((entry) => entry.id !== blueprint.id));
       setNotice({
         message: `Blueprint ${blueprint.name} reactivated.`,
         tone: "success",
       });
-      await refreshBlueprints();
       if (reactivated?.id) {
         setSelectedBlueprintId(reactivated.id);
       }

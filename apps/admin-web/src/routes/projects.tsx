@@ -33,20 +33,22 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import {
+  createAdminProject,
+  deleteAdminProject,
+  updateAdminProject,
+  useAdminBlueprints,
+  useAdminProjects,
+} from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
 import {
-  type Blueprint,
   type DispatchReadiness,
-  type LoadStatus,
   type Project,
   dispatchReadinessTone,
   formatDate,
   getDispatchReadinessLabel,
-  normalizeBlueprints,
-  normalizeProjects,
   projectHasRepositoryRegistration,
   projectIsDispatchReady,
-  requestInternalApi,
   tenantTone,
   toErrorMessage,
 } from "../lib/control-plane";
@@ -87,13 +89,15 @@ function ProjectsRoute() {
   const canManageProjects = activeRole === "owner" || activeRole === "admin";
   const signInHandoff = buildCustomerSignInHref(getCurrentAdminPath("/projects"), "/projects");
 
-  const [projectStatus, setProjectStatus] = useState<LoadStatus>("idle");
-  const [projectError, setProjectError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-
-  const [blueprintStatus, setBlueprintStatus] = useState<LoadStatus>("idle");
-  const [blueprintError, setBlueprintError] = useState<string | null>(null);
-  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const projectsQuery = useAdminProjects(productCollectionsEnabled, activeOrganization?.id);
+  const blueprintsQuery = useAdminBlueprints(productCollectionsEnabled, activeOrganization?.id);
+  const projectStatus = projectsQuery.status;
+  const projectError = projectsQuery.error;
+  const projects = projectsQuery.rows;
+  const blueprintStatus = blueprintsQuery.status;
+  const blueprintError = blueprintsQuery.error;
+  const blueprints = blueprintsQuery.rows;
 
   const [form, setForm] = useState(defaultProjectForm);
   const [slugDirty, setSlugDirty] = useState(false);
@@ -102,20 +106,6 @@ function ProjectsRoute() {
   const [notice, setNotice] = useState<{ message: string; tone: "danger" | "success" } | null>(
     null,
   );
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setProjectStatus("idle");
-      setProjectError(null);
-      setProjects([]);
-      setBlueprintStatus("idle");
-      setBlueprintError(null);
-      setBlueprints([]);
-      return;
-    }
-
-    void refreshEverything();
-  }, [activeOrganization?.id, session?.session.id]);
 
   useEffect(() => {
     if (!sessionQuery.isPending && !session && typeof window !== "undefined") {
@@ -160,43 +150,7 @@ function ProjectsRoute() {
   );
 
   async function refreshEverything() {
-    await Promise.all([refreshProjects(), refreshBlueprints()]);
-  }
-
-  async function refreshProjects() {
-    setProjectStatus("loading");
-    setProjectError(null);
-
-    try {
-      const payload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-
-      setProjects(normalizeProjects(payload?.projects));
-      setProjectStatus("ready");
-    } catch (caughtError) {
-      setProjectStatus("error");
-      setProjectError(toErrorMessage(caughtError, "Unable to load project inventory."));
-      setProjects([]);
-    }
-  }
-
-  async function refreshBlueprints() {
-    setBlueprintStatus("loading");
-    setBlueprintError(null);
-
-    try {
-      const payload = (await requestInternalApi("/blueprints")) as {
-        blueprints?: unknown[];
-      } | null;
-
-      setBlueprints(normalizeBlueprints(payload?.blueprints));
-      setBlueprintStatus("ready");
-    } catch (caughtError) {
-      setBlueprintStatus("error");
-      setBlueprintError(toErrorMessage(caughtError, "Unable to load blueprint inventory."));
-      setBlueprints([]);
-    }
+    await Promise.all([projectsQuery.refresh(), blueprintsQuery.refresh()]);
   }
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
@@ -210,21 +164,18 @@ function ProjectsRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi("/projects", {
-        body: JSON.stringify({
-          billingEmail: emptyToNull(form.billingEmail),
-          billingPlan: emptyToNull(form.billingPlan),
-          billingReference: emptyToNull(form.billingReference),
-          defaultBranch: emptyToNull(form.defaultBranch) ?? "main",
-          description: emptyToNull(form.description),
-          name: form.name.trim(),
-          repoName: form.repoName.trim(),
-          repoOwner: form.repoOwner.trim(),
-          repoProvider: githubRepoProvider,
-          slug: form.slug.trim(),
-          workflowMode: form.workflowMode,
-        }),
-        method: "POST",
+      await createAdminProject({
+        billingEmail: emptyToNull(form.billingEmail),
+        billingPlan: emptyToNull(form.billingPlan),
+        billingReference: emptyToNull(form.billingReference),
+        defaultBranch: emptyToNull(form.defaultBranch) ?? "main",
+        description: emptyToNull(form.description),
+        name: form.name.trim(),
+        repoName: form.repoName.trim(),
+        repoOwner: form.repoOwner.trim(),
+        repoProvider: githubRepoProvider,
+        slug: form.slug.trim(),
+        workflowMode: form.workflowMode,
       });
 
       setForm(defaultProjectForm);
@@ -233,7 +184,6 @@ function ProjectsRoute() {
         message: "Project created.",
         tone: "success",
       });
-      await refreshProjects();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to create project."),
@@ -253,18 +203,14 @@ function ProjectsRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi(`/projects/${encodeURIComponent(project.id)}`, {
-        body: JSON.stringify({
-          defaultBlueprintId: emptyToNull(defaultBlueprintDrafts[project.id] ?? ""),
-        }),
-        method: "PATCH",
+      await updateAdminProject(project.id, {
+        defaultBlueprintId: emptyToNull(defaultBlueprintDrafts[project.id] ?? ""),
       });
 
       setNotice({
         message: `Default Blueprint saved for ${project.name}.`,
         tone: "success",
       });
-      await refreshProjects();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to update the project default Blueprint."),
@@ -284,15 +230,12 @@ function ProjectsRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi(`/projects/${encodeURIComponent(project.id)}`, {
-        method: "DELETE",
-      });
+      await deleteAdminProject(project.id);
 
       setNotice({
         message: `Project ${project.name} deleted.`,
         tone: "success",
       });
-      await refreshProjects();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to delete project."),

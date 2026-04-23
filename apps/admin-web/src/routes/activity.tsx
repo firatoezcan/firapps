@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { Activity, ArrowRight, RefreshCw, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import {
   AppPage,
@@ -15,30 +15,10 @@ import {
 } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
 
+import { useAdminActivity, useAdminOverview } from "../lib/admin-product-data";
 import { authClient } from "../lib/auth-client";
-import {
-  type ActivityItem,
-  type LoadStatus,
-  type Overview,
-  formatDate,
-  normalizeActivity,
-  normalizeOverview,
-  requestInternalApi,
-  runTone,
-  statusTone,
-  toErrorMessage,
-} from "../lib/control-plane";
+import { type Overview, formatDate, runTone, statusTone } from "../lib/control-plane";
 import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
-
-const emptyOverview: Overview = {
-  activeRuns: 0,
-  failedRuns: 0,
-  pendingInvitations: 0,
-  projectCount: 0,
-  readyWorkspaces: 0,
-  runCount: 0,
-  workspaceCount: 0,
-};
 
 export const Route = createFileRoute("/activity")({
   component: ActivityRoute,
@@ -51,10 +31,20 @@ function ActivityRoute() {
   const session = sessionQuery.data;
   const activeOrganization = activeOrganizationQuery.data ?? null;
 
-  const [activityStatus, setActivityStatus] = useState<LoadStatus>("idle");
-  const [activityError, setActivityError] = useState<string | null>(null);
-  const [overview, setOverview] = useState<Overview>(emptyOverview);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const overviewQuery = useAdminOverview(productCollectionsEnabled, activeOrganization?.id);
+  const activityQuery = useAdminActivity(productCollectionsEnabled, activeOrganization?.id);
+  const activityStatus =
+    overviewQuery.status === "error" || activityQuery.status === "error"
+      ? "error"
+      : overviewQuery.status === "loading" || activityQuery.status === "loading"
+        ? "loading"
+        : overviewQuery.status === "ready" && activityQuery.status === "ready"
+          ? "ready"
+          : "idle";
+  const activityError = overviewQuery.error ?? activityQuery.error;
+  const overview: Overview = overviewQuery.overview;
+  const activity = activityQuery.rows;
   const failedActivity = useMemo(
     () => activity.filter((entry) => entry.status.toLowerCase() === "failed"),
     [activity],
@@ -68,39 +58,8 @@ function ActivityRoute() {
     [activity],
   );
 
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setActivityStatus("idle");
-      setActivityError(null);
-      setOverview(emptyOverview);
-      setActivity([]);
-      return;
-    }
-
-    void refreshEverything();
-  }, [activeOrganization?.id, session?.session.id]);
-
   async function refreshEverything() {
-    setActivityStatus("loading");
-    setActivityError(null);
-
-    try {
-      const [overviewPayload, activityPayload] = await Promise.all([
-        requestInternalApi("/overview"),
-        requestInternalApi("/activity"),
-      ]);
-
-      setOverview(normalizeOverview((overviewPayload as { overview?: unknown } | null)?.overview));
-      setActivity(
-        normalizeActivity((activityPayload as { activity?: unknown[] } | null)?.activity),
-      );
-      setActivityStatus("ready");
-    } catch (caughtError) {
-      setActivityStatus("error");
-      setActivityError(toErrorMessage(caughtError, "Unable to load recent activity."));
-      setOverview(emptyOverview);
-      setActivity([]);
-    }
+    await Promise.all([overviewQuery.refresh(), activityQuery.refresh()]);
   }
 
   return (

@@ -16,25 +16,15 @@ import {
 } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
 
-import { authClient } from "../lib/auth-client";
 import {
-  type LoadStatus,
-  type Project,
-  type Workspace,
-  formatDate,
-  normalizeProjects,
-  normalizeWorkspaces,
-  requestInternalApi,
-  toErrorMessage,
-  workspaceIsReady,
-  workspaceTone,
-} from "../lib/control-plane";
+  createAdminWorkspace,
+  deleteAdminWorkspace,
+  useAdminProjects,
+  useAdminWorkspaceInventory,
+} from "../lib/admin-product-data";
+import { authClient } from "../lib/auth-client";
+import { formatDate, toErrorMessage, workspaceIsReady, workspaceTone } from "../lib/control-plane";
 import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
-
-type WorkspaceRow = Workspace & {
-  projectName: string;
-  projectSlug: string;
-};
 
 const defaultWorkspaceForm = {
   imageFlavor: "minimal",
@@ -62,10 +52,25 @@ function DevboxesRoute() {
     ((activeMemberRoleQuery.data ?? null) as { role?: string } | null)?.role ?? null;
   const canManageWorkspaces = activeRole === "owner" || activeRole === "admin";
 
-  const [workspaceStatus, setWorkspaceStatus] = useState<LoadStatus>("idle");
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
+  const productCollectionsEnabled = Boolean(session && activeOrganization?.id);
+  const projectsQuery = useAdminProjects(productCollectionsEnabled, activeOrganization?.id);
+  const projects = projectsQuery.rows;
+  const workspacesQuery = useAdminWorkspaceInventory(
+    productCollectionsEnabled && projects.length > 0,
+    projects,
+    activeOrganization?.id,
+  );
+  const workspaceStatus =
+    projectsQuery.status === "error" || workspacesQuery.status === "error"
+      ? "error"
+      : projectsQuery.status === "loading" || workspacesQuery.status === "loading"
+        ? "loading"
+        : projectsQuery.status === "ready" &&
+            (workspacesQuery.status === "ready" || projects.length === 0)
+          ? "ready"
+          : "idle";
+  const workspaceError = projectsQuery.error ?? workspacesQuery.error;
+  const workspaces = workspacesQuery.rows;
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [form, setForm] = useState(defaultWorkspaceForm);
@@ -73,18 +78,6 @@ function DevboxesRoute() {
   const [notice, setNotice] = useState<{ message: string; tone: "danger" | "success" } | null>(
     null,
   );
-
-  useEffect(() => {
-    if (!session || !activeOrganization?.id) {
-      setWorkspaceStatus("idle");
-      setWorkspaceError(null);
-      setProjects([]);
-      setWorkspaces([]);
-      return;
-    }
-
-    void refreshEverything();
-  }, [activeOrganization?.id, session?.session.id]);
 
   useEffect(() => {
     if (projects.length === 0) {
@@ -131,53 +124,8 @@ function DevboxesRoute() {
   }, [selectedProject?.id, selectedProject?.repoName, selectedProject?.repoOwner]);
 
   async function refreshEverything() {
-    setWorkspaceStatus("loading");
-    setWorkspaceError(null);
-
-    try {
-      const projectsPayload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-      const nextProjects = normalizeProjects(projectsPayload?.projects);
-
-      setProjects(nextProjects);
-
-      if (nextProjects.length === 0) {
-        setWorkspaces([]);
-        setWorkspaceStatus("ready");
-        return;
-      }
-
-      const workspacePayloads = await Promise.all(
-        nextProjects.map(async (project) => {
-          const payload = (await requestInternalApi(
-            `/workspaces?tenantId=${encodeURIComponent(project.id)}`,
-          )) as { workspaces?: unknown[] } | null;
-
-          return normalizeWorkspaces(payload?.workspaces).map((workspace) => ({
-            ...workspace,
-            projectName: project.name,
-            projectSlug: project.slug,
-          }));
-        }),
-      );
-
-      setWorkspaces(
-        workspacePayloads
-          .flat()
-          .sort(
-            (left, right) =>
-              new Date(right.updatedAt ?? right.createdAt ?? 0).getTime() -
-              new Date(left.updatedAt ?? left.createdAt ?? 0).getTime(),
-          ),
-      );
-      setWorkspaceStatus("ready");
-    } catch (caughtError) {
-      setWorkspaceStatus("error");
-      setWorkspaceError(toErrorMessage(caughtError, "Unable to load devbox inventory."));
-      setProjects([]);
-      setWorkspaces([]);
-    }
+    await projectsQuery.refresh();
+    await workspacesQuery.refresh();
   }
 
   async function handleCreateWorkspace(event: FormEvent<HTMLFormElement>) {
@@ -191,17 +139,17 @@ function DevboxesRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi("/workspaces", {
-        body: JSON.stringify({
+      await createAdminWorkspace(
+        {
           imageFlavor: form.imageFlavor.trim(),
           nixPackages: parsePackageInput(form.nixPackages),
           provider: form.provider.trim(),
           repoName: form.repoName.trim(),
           repoOwner: form.repoOwner.trim(),
           tenantId: selectedProjectId,
-        }),
-        method: "POST",
-      });
+        },
+        projects,
+      );
 
       setForm((current) => ({
         ...defaultWorkspaceForm,
@@ -214,7 +162,7 @@ function DevboxesRoute() {
         message: "Devbox created.",
         tone: "success",
       });
-      await refreshEverything();
+      await workspacesQuery.refresh();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to create workspace."),
@@ -234,15 +182,13 @@ function DevboxesRoute() {
     setNotice(null);
 
     try {
-      await requestInternalApi(`/workspaces/${encodeURIComponent(workspaceId)}`, {
-        method: "DELETE",
-      });
+      await deleteAdminWorkspace(workspaceId, projects);
 
       setNotice({
         message: "Devbox deleted.",
         tone: "success",
       });
-      await refreshEverything();
+      await workspacesQuery.refresh();
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to delete workspace."),
