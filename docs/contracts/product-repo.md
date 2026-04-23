@@ -64,11 +64,13 @@
   for the user-installed Docker runner lane: `internal-api` owns the MVP
   control-plane schema and structured protocol surfaces for runner
   registration, one-time API-key issuance, hashed key/session storage,
-  runner heartbeats, polling leases, structured job creation, append-only
-  events, typed results, typed artifacts, and revocation; admin-web owns
-  registration/status/API-key handoff UX, customer-web exposes read-only
-  status and install guidance, and this repo still does not implement the
-  runner daemon image or firops runtime worker
+  runner heartbeats, polling leases, runner-side cancellation polling,
+  admin-side job cancellation, expired-lease sweeping, operation-specific
+  structured job creation for the firops daemon's branch/PR payloads,
+  append-only events, typed results, typed artifacts, and revocation;
+  admin-web owns registration/status/API-key handoff UX, customer-web exposes
+  read-only status and install guidance, and this repo still does not implement
+  the runner daemon image or firops runtime worker
 - TanStack DB is the core frontend data layer for product API requests in
   `apps/admin-web` and `apps/customer-web`: product reads and product
   mutations against same-origin `/api/internal/*` and `/api/public/*` must be

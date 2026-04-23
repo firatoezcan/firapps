@@ -159,8 +159,13 @@ Expected signal:
   exchange uses a bearer API key outside the JSON body, unsupported protocol
   versions are rejected, unknown operations are rejected, and structured job
   params reject shell/argv/Docker CLI/host-mount fields
+- `internal-api` unit tests prove branch/PR runner jobs use the firops daemon's
+  operation-specific `repo.prepare`, `git.push`, and `github.create_pr`
+  payload shapes, cancellation polling returns an explicit signal, and expired
+  leases are classified for requeue or cancellation by the sweeper
 - `internal-api` builds with the runner registration, session, heartbeat,
-  polling lease, event, result, artifact, and revocation endpoints
+  polling lease, cancellation polling, admin cancellation, expired-lease
+  sweep, job status/detail, event, result, artifact, and revocation endpoints
 - both frontend builds exit `0` with the `/runners` routes and quick-nav
   entries
 - admin-web compiles the typed `/api/internal/runners` client for list,
@@ -171,7 +176,7 @@ Expected signal:
 Failure interpretation:
 
 - if `internal-api` tests fail, the runner API-key/protocol/structured-operation
-  boundary regressed
+  boundary, cancellation signal, or lease-expiry policy regressed
 - if `internal-api` build fails, the runner schema or Hono endpoint contract
   regressed
 - if either build fails, the runner UI surface or route generation regressed

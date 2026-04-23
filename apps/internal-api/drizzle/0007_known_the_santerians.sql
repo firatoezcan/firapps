@@ -1,0 +1,3 @@
+ALTER TABLE "operations"."runner_jobs" ADD COLUMN "assigned_runner_id" uuid;--> statement-breakpoint
+ALTER TABLE "operations"."runner_jobs" ADD CONSTRAINT "runner_jobs_assigned_runner_id_runner_registrations_id_fk" FOREIGN KEY ("assigned_runner_id") REFERENCES "operations"."runner_registrations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "runner_jobs_assigned_runner_id_idx" ON "operations"."runner_jobs" USING btree ("assigned_runner_id");

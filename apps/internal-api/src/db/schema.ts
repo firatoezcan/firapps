@@ -584,6 +584,9 @@ export const runnerJobs = operationsSchema.table(
     runnerId: uuid("runner_id").references(() => runnerRegistrations.id, {
       onDelete: "set null",
     }),
+    assignedRunnerId: uuid("assigned_runner_id").references(() => runnerRegistrations.id, {
+      onDelete: "set null",
+    }),
     sessionId: uuid("session_id").references(() => runnerSessions.id, {
       onDelete: "set null",
     }),
@@ -613,6 +616,7 @@ export const runnerJobs = operationsSchema.table(
       table.organizationId,
       table.idempotencyKey,
     ),
+    assignedRunnerIdIndex: index("runner_jobs_assigned_runner_id_idx").on(table.assignedRunnerId),
     organizationIdIndex: index("runner_jobs_organization_id_idx").on(table.organizationId),
     runnerIdIndex: index("runner_jobs_runner_id_idx").on(table.runnerId),
     runIdIndex: index("runner_jobs_run_id_idx").on(table.runId),

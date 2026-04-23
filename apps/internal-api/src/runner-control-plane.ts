@@ -19,6 +19,19 @@ export const runnerOperations = [
 ] as const satisfies [RunnerOperation, ...RunnerOperation[]];
 
 const runnerOperationValues = runnerOperations;
+const maxAgentMessageBytes = 50_000;
+const maxArtifactValueBytes = 200_000;
+const maxHandlerDelayMillis = 5_000;
+
+const safeCheckoutId = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/;
+const safeContainerName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+const safeGitHubName = /^[A-Za-z0-9_.-]{1,100}$/;
+const safeGitRef = /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,199}$/;
+const safeGitRemote = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+export const runnerJobTerminalStatuses = ["completed", "failed", "cancelled"] as const;
+export const runnerJobActiveLeaseStatuses = ["leased", "running"] as const;
+export const runnerJobCancellationStatuses = ["cancelling", "cancelled"] as const;
 
 const forbiddenStructuredKeys = new Set([
   "args",
@@ -69,6 +82,188 @@ export const runnerOperationSchema = z.enum(runnerOperationValues);
 
 const protocolVersionSchema = z.literal(runnerProtocolVersion);
 
+const runnerParamsSchema = <TShape extends z.ZodRawShape>(shape: TShape) =>
+  z
+    .object(shape)
+    .strict()
+    .superRefine((value, ctx) => {
+      for (const path of findForbiddenStructuredFields(value as JsonValue)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "runner instructions must be structured and must not contain shell, argv, Docker CLI, privileged, or host mount fields",
+          path,
+        });
+      }
+    });
+
+const checkoutIdSchema = z
+  .string()
+  .trim()
+  .regex(safeCheckoutId, "checkoutId contains unsupported characters");
+
+const gitRefSchema = (name: string) =>
+  z
+    .string()
+    .trim()
+    .min(1, `${name} is required`)
+    .max(200, `${name} must be at most 200 bytes`)
+    .regex(safeGitRef, `${name} contains unsupported characters`)
+    .superRefine((value, ctx) => {
+      if (
+        value.startsWith("-") ||
+        value.startsWith("/") ||
+        value.includes("..") ||
+        value.includes("@{") ||
+        value.includes("//") ||
+        value.endsWith("/") ||
+        value.endsWith(".lock")
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${name} is not an allowed git ref`,
+        });
+      }
+    });
+
+const gitBranchSchema = (name: string) =>
+  gitRefSchema(name).superRefine((value, ctx) => {
+    if (value.startsWith("refs/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${name} must be a branch name, not a full ref`,
+      });
+    }
+  });
+
+const repositoryUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "repositoryUrl is required")
+  .max(2048, "repositoryUrl must be at most 2048 bytes")
+  .superRefine((value, ctx) => {
+    let parsed: URL;
+
+    try {
+      parsed = new URL(value);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "repositoryUrl must be an absolute git URL",
+      });
+      return;
+    }
+
+    if (parsed.username || parsed.password) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "repositoryUrl must not include embedded credentials",
+      });
+      return;
+    }
+
+    if (parsed.protocol === "https:") {
+      return;
+    }
+
+    if (
+      parsed.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)
+    ) {
+      return;
+    }
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "repositoryUrl must use https except for loopback http fixtures",
+    });
+  });
+
+const repositoryParamsSchema = runnerParamsSchema({
+  branch: gitBranchSchema("branch").optional(),
+  checkoutId: checkoutIdSchema.optional(),
+  ref: gitRefSchema("ref"),
+  repositoryUrl: repositoryUrlSchema,
+});
+
+const gitPushParamsSchema = runnerParamsSchema({
+  branch: gitBranchSchema("branch"),
+  checkoutId: checkoutIdSchema,
+  remoteName: z
+    .string()
+    .trim()
+    .regex(safeGitRemote, "remoteName contains unsupported characters")
+    .optional(),
+  repositoryUrl: repositoryUrlSchema,
+});
+
+const githubCreatePrParamsSchema = runnerParamsSchema({
+  base: gitBranchSchema("base"),
+  body: z.string().max(maxArtifactValueBytes).optional(),
+  branch: gitBranchSchema("branch"),
+  draft: z.boolean().optional(),
+  owner: z
+    .string()
+    .trim()
+    .min(1, "owner is required")
+    .max(100)
+    .regex(safeGitHubName, "owner contains unsupported characters"),
+  repo: z
+    .string()
+    .trim()
+    .min(1, "repo is required")
+    .max(100)
+    .regex(safeGitHubName, "repo contains unsupported characters"),
+  title: z.string().trim().min(1, "title is required").max(256),
+});
+
+const agentForwardMessageParamsSchema = runnerParamsSchema({
+  content: z.string().trim().min(1, "content is required").max(maxAgentMessageBytes),
+  delayMillis: z.number().int().min(0).max(maxHandlerDelayMillis).optional(),
+  messageId: z.string().trim().min(1, "messageId is required").max(160),
+  metadata: z.record(z.string(), z.string()).optional(),
+  taskId: z.string().trim().min(1, "taskId is required").max(160),
+});
+
+const containerStartParamsSchema = runnerParamsSchema({
+  containerName: z
+    .string()
+    .trim()
+    .regex(safeContainerName, "containerName contains unsupported characters")
+    .optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  image: z
+    .string()
+    .trim()
+    .min(1, "container.start image is required")
+    .max(512)
+    .refine((value) => value.includes("@sha256:"), {
+      message: "container.start image must be pinned by digest",
+    }),
+  tenantId: z.string().uuid("tenantId is required for runner-owned container labels"),
+});
+
+const containerStopParamsSchema = runnerParamsSchema({
+  containerId: z.string().trim().min(1, "containerId is required").max(160),
+  timeoutSeconds: z.number().int().min(0).max(60).optional(),
+});
+
+const artifactUploadParamsSchema = runnerParamsSchema({
+  artifactType: z.string().trim().min(1, "artifactType is required").max(120),
+  label: z.string().trim().min(1, "label is required").max(160),
+  metadata: z.record(z.string(), jsonValueSchema).optional(),
+  url: z.string().trim().url("url must be absolute when provided").optional(),
+  value: z.string().max(maxArtifactValueBytes).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.value && !value.url) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "artifact.upload requires value or url",
+      path: ["value"],
+    });
+  }
+});
+
 export const createRunnerRegistrationSchema = z
   .object({
     allowedOperations: z.array(runnerOperationSchema).min(1).optional(),
@@ -110,16 +305,34 @@ export const claimRunnerJobSchema = z
   })
   .strict();
 
-export const createRunnerJobSchema = z
+const createRunnerJobBaseSchema = z
   .object({
     idempotencyKey: z.string().trim().min(1).max(160).optional(),
-    operation: runnerOperationSchema,
-    params: runnerMetadataSchema.optional(),
     runId: z.string().uuid().nullable().optional(),
     runnerId: z.string().uuid().nullable().optional(),
     tenantId: z.string().uuid(),
   })
   .strict();
+
+const createRunnerJobVariant = <TOperation extends RunnerOperation, TParams extends z.ZodTypeAny>(
+  operation: TOperation,
+  params: TParams,
+) =>
+  createRunnerJobBaseSchema.extend({
+    operation: z.literal(operation),
+    params,
+  });
+
+export const createRunnerJobSchema = z.discriminatedUnion("operation", [
+  createRunnerJobVariant("repo.prepare", repositoryParamsSchema),
+  createRunnerJobVariant("git.clone", repositoryParamsSchema),
+  createRunnerJobVariant("git.push", gitPushParamsSchema),
+  createRunnerJobVariant("github.create_pr", githubCreatePrParamsSchema),
+  createRunnerJobVariant("agent.forward_message", agentForwardMessageParamsSchema),
+  createRunnerJobVariant("container.start", containerStartParamsSchema),
+  createRunnerJobVariant("container.stop", containerStopParamsSchema),
+  createRunnerJobVariant("artifact.upload", artifactUploadParamsSchema),
+]);
 
 export const runnerJobIdParamsSchema = z.object({
   jobId: z.string().uuid(),
@@ -133,6 +346,18 @@ export const updateRunnerLeaseSchema = z
   .object({
     action: z.enum(["extend", "cancel"]).optional().default("extend"),
     leaseSeconds: z.number().int().min(30).max(3600).optional().default(defaultRunnerLeaseSeconds),
+    protocolVersion: protocolVersionSchema,
+  })
+  .strict();
+
+export const cancelRunnerJobSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(1000).optional(),
+  })
+  .strict();
+
+export const runnerJobCancellationQuerySchema = z
+  .object({
     protocolVersion: protocolVersionSchema,
   })
   .strict();
@@ -204,6 +429,68 @@ export function toRunnerMetadata(value: RunnerMetadata | undefined) {
   return value ?? {};
 }
 
+export function isRunnerJobTerminalStatus(status: string) {
+  return runnerJobTerminalStatuses.includes(status as (typeof runnerJobTerminalStatuses)[number]);
+}
+
+export function runnerJobLeaseIsExpired(
+  input: { leaseExpiresAt: Date | null; status: string },
+  now = new Date(),
+) {
+  return (
+    !isRunnerJobTerminalStatus(input.status) &&
+    input.leaseExpiresAt != null &&
+    input.leaseExpiresAt.getTime() <= now.getTime()
+  );
+}
+
+export function runnerJobLeaseMutationAllowed(
+  input: { leaseExpiresAt: Date | null; status: string },
+  now = new Date(),
+) {
+  return (
+    ["leased", "running", "cancelling"].includes(input.status) &&
+    input.leaseExpiresAt != null &&
+    input.leaseExpiresAt.getTime() > now.getTime()
+  );
+}
+
+export function expiredRunnerLeaseDisposition(
+  input: { leaseExpiresAt: Date | null; status: string },
+  now = new Date(),
+) {
+  if (!runnerJobLeaseIsExpired(input, now)) {
+    return "none" as const;
+  }
+
+  if (input.status === "cancelling") {
+    return "cancel" as const;
+  }
+
+  if (runnerJobActiveLeaseStatuses.includes(input.status as "leased" | "running")) {
+    return "requeue" as const;
+  }
+
+  return "none" as const;
+}
+
+export function runnerJobCancellationResponse(input: {
+  failureMessage: string | null;
+  status: string;
+}) {
+  const cancelled = runnerJobCancellationStatuses.includes(
+    input.status as "cancelling" | "cancelled",
+  );
+
+  return {
+    cancelled,
+    job: {
+      status: input.status,
+    },
+    reason: cancelled ? (input.failureMessage ?? "operator requested cancellation") : undefined,
+  };
+}
+
 function normalizeStructuredKey(key: string) {
   return key.replace(/[-_]/g, "").toLowerCase();
 }
@@ -231,7 +518,7 @@ function findForbiddenStructuredFields(value: JsonValue, path: Array<string | nu
 
     if (normalizeStructuredKey(key) === "env" && typeof entry === "object" && entry !== null) {
       for (const envKey of Object.keys(entry)) {
-        if (envKey.toUpperCase() === "FIROPS_RUNNER_API_KEY") {
+        if (envKey.toUpperCase().includes("RUNNER_API_KEY")) {
           matches.push([...keyPath, envKey]);
         }
       }

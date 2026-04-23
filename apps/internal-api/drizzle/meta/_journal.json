@@ -50,6 +50,13 @@
       "when": 1776975726566,
       "tag": "0006_magical_ultimo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776982972210,
+      "tag": "0007_known_the_santerians",
+      "breakpoints": true
     }
   ]
 }

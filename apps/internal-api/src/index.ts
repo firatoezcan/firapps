@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { hashPassword } from "better-auth/crypto";
 import type { Context } from "hono";
-import { and, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -58,11 +58,13 @@ import {
   type BlueprintStepDefinition,
   type DispatchMetadata,
   type JsonValue,
+  type RunnerMetadata,
   type RunnerOperation,
   type RunEventMetadata,
 } from "./db/schema.js";
 import {
   buildRunnerSecretPreview,
+  cancelRunnerJobSchema,
   claimRunnerJobSchema,
   completeRunnerJobSchema,
   createRunnerApiKey,
@@ -71,13 +73,19 @@ import {
   createRunnerSessionSchema,
   createRunnerSessionToken,
   defaultRunnerLeaseSeconds,
+  expiredRunnerLeaseDisposition,
   hashRunnerSecret,
+  isRunnerJobTerminalStatus,
   nextRunnerLeaseExpiry,
   nextRunnerSessionExpiry,
   runnerHeartbeatSchema,
   runnerIdParamsSchema,
+  runnerJobCancellationQuerySchema,
+  runnerJobCancellationResponse,
   runnerJobEventSchema,
   runnerJobIdParamsSchema,
+  runnerJobLeaseIsExpired,
+  runnerJobLeaseMutationAllowed,
   runnerOperations,
   runnerProtocolVersion,
   toRunnerMetadata,
@@ -221,6 +229,17 @@ const listRunsQuerySchema = z
   .object({
     requestedBy: requestedByScopeQuerySchema.optional(),
     source: runSourceSchema.optional(),
+    tenantId: z.string().uuid().optional(),
+  })
+  .strict();
+
+const listRunnerJobsQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+    runId: z.string().uuid().optional(),
+    status: z
+      .enum(["queued", "leased", "running", "cancelling", "completed", "failed", "cancelled"])
+      .optional(),
     tenantId: z.string().uuid().optional(),
   })
   .strict();
@@ -627,6 +646,7 @@ function toRunnerRegistrationResponse(record: RunnerRegistrationRecord) {
 
 function toRunnerJobResponse(record: RunnerJobRecord) {
   return {
+    assignedRunnerId: record.assignedRunnerId,
     completedAt: record.completedAt,
     createdAt: record.createdAt,
     failureMessage: record.failureMessage,
@@ -719,6 +739,16 @@ async function getOrganizationRunnerRecord(organizationId: string, runnerId: str
   return record ?? null;
 }
 
+async function getOrganizationRunnerJobRecord(organizationId: string, jobId: string) {
+  const [record] = await runtime.db
+    .select()
+    .from(runnerJobs)
+    .where(and(eq(runnerJobs.organizationId, organizationId), eq(runnerJobs.id, jobId)))
+    .limit(1);
+
+  return record ?? null;
+}
+
 function runnerCanServeTenant(runner: RunnerRegistrationRecord, tenantId: string) {
   return runner.tenantId == null || runner.tenantId === tenantId;
 }
@@ -785,6 +815,114 @@ async function getRunnerOwnedJob(input: { jobId: string; runnerId: string }) {
     .limit(1);
 
   return record ?? null;
+}
+
+async function sweepExpiredRunnerJobLeases(input: { organizationId?: string; now?: Date } = {}) {
+  const now = input.now ?? new Date();
+  const filters = [
+    inArray(runnerJobs.status, ["leased", "running", "cancelling"]),
+    lte(runnerJobs.leaseExpiresAt, now),
+  ];
+
+  if (input.organizationId) {
+    filters.push(eq(runnerJobs.organizationId, input.organizationId));
+  }
+
+  const expiredJobs = await runtime.db
+    .select()
+    .from(runnerJobs)
+    .where(and(...filters))
+    .orderBy(runnerJobs.createdAt);
+
+  let cancelled = 0;
+  let requeued = 0;
+
+  for (const job of expiredJobs) {
+    const disposition = expiredRunnerLeaseDisposition(job, now);
+
+    if (disposition === "requeue") {
+      const [updatedJob] = await runtime.db
+        .update(runnerJobs)
+        .set({
+          leaseExpiresAt: null,
+          runnerId: null,
+          sessionId: null,
+          status: "queued",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(runnerJobs.id, job.id),
+            eq(runnerJobs.status, job.status),
+            lte(runnerJobs.leaseExpiresAt, now),
+          ),
+        )
+        .returning();
+
+      if (!updatedJob) {
+        continue;
+      }
+
+      requeued += 1;
+      await runtime.db.insert(runnerJobEvents).values({
+        eventKind: "lease_expired",
+        jobId: job.id,
+        level: "warn",
+        message: "Runner job lease expired; job returned to the queue.",
+        metadata: {
+          leaseExpiresAt: job.leaseExpiresAt?.toISOString() ?? null,
+          previousRunnerId: job.runnerId,
+          previousSessionId: job.sessionId,
+        },
+        runnerId: job.runnerId,
+      });
+    }
+
+    if (disposition === "cancel") {
+      const [updatedJob] = await runtime.db
+        .update(runnerJobs)
+        .set({
+          completedAt: now,
+          failureMessage: job.failureMessage ?? "runner cancellation lease expired",
+          leaseExpiresAt: null,
+          sessionId: null,
+          status: "cancelled",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(runnerJobs.id, job.id),
+            eq(runnerJobs.status, job.status),
+            lte(runnerJobs.leaseExpiresAt, now),
+          ),
+        )
+        .returning();
+
+      if (!updatedJob) {
+        continue;
+      }
+
+      cancelled += 1;
+      await runtime.db.insert(runnerJobEvents).values({
+        eventKind: "cancelled",
+        jobId: job.id,
+        level: "warn",
+        message: "Runner job cancellation lease expired.",
+        metadata: {
+          leaseExpiresAt: job.leaseExpiresAt?.toISOString() ?? null,
+          previousRunnerId: job.runnerId,
+          previousSessionId: job.sessionId,
+        },
+        runnerId: job.runnerId,
+      });
+    }
+  }
+
+  return {
+    cancelled,
+    requeued,
+    swept: cancelled + requeued,
+  };
 }
 
 async function getOrganizationTenantRecord(organizationId: string, tenantId: string) {
@@ -4354,6 +4492,52 @@ app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/heartbeat`, async (c) =
   });
 });
 
+app.get(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const query = listRunnerJobsQuerySchema.parse({
+    limit: c.req.query("limit"),
+    runId: c.req.query("runId"),
+    status: c.req.query("status"),
+    tenantId: c.req.query("tenantId"),
+  });
+
+  await sweepExpiredRunnerJobLeases({
+    organizationId: accessResult.access.organizationId,
+  });
+
+  const filters = [eq(runnerJobs.organizationId, accessResult.access.organizationId)];
+
+  if (query.tenantId) {
+    filters.push(eq(runnerJobs.tenantId, query.tenantId));
+  }
+
+  if (query.runId) {
+    filters.push(eq(runnerJobs.runId, query.runId));
+  }
+
+  if (query.status) {
+    filters.push(eq(runnerJobs.status, query.status));
+  }
+
+  const records = await runtime.db
+    .select()
+    .from(runnerJobs)
+    .where(and(...filters))
+    .orderBy(desc(runnerJobs.createdAt))
+    .limit(query.limit);
+
+  return c.json({
+    jobs: records.map(toRunnerJobResponse),
+  });
+});
+
 app.post(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
   const accessResult = await requireOrganizationAccess(c, {
     requireAdmin: true,
@@ -4364,6 +4548,11 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
   }
 
   const body = createRunnerJobSchema.parse(await c.req.json());
+
+  if (body.operation === "container.start" && body.params.tenantId !== body.tenantId) {
+    return c.json({ error: "runner_job_tenant_param_mismatch" }, 422);
+  }
+
   const scope = await assertRunnerJobScope({
     operation: body.operation,
     organizationId: accessResult.access.organizationId,
@@ -4382,10 +4571,11 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
         idempotencyKey: body.idempotencyKey ?? randomUUID(),
         operation: body.operation,
         organizationId: accessResult.access.organizationId,
-        params: toRunnerMetadata(body.params),
+        assignedRunnerId: body.runnerId ?? null,
+        params: toRunnerMetadata(body.params as RunnerMetadata),
         requestedByUserId: accessResult.access.session.user.id,
         runId: body.runId ?? null,
-        runnerId: body.runnerId ?? null,
+        runnerId: null,
         tenantId: scope.project.id,
       })
       .returning();
@@ -4397,7 +4587,7 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
       metadata: {
         jobId: job.id,
         operation: job.operation,
-        runnerId: job.runnerId,
+        assignedRunnerId: job.assignedRunnerId,
       },
       organizationId: accessResult.access.organizationId,
       runId: job.runId,
@@ -4414,6 +4604,148 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
 
     throw error;
   }
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/sweep-expired`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const result = await sweepExpiredRunnerJobLeases({
+    organizationId: accessResult.access.organizationId,
+  });
+
+  return c.json(result);
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+
+  await sweepExpiredRunnerJobLeases({
+    organizationId: accessResult.access.organizationId,
+  });
+
+  const job = await getOrganizationRunnerJobRecord(
+    accessResult.access.organizationId,
+    params.jobId,
+  );
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  const [events, artifacts] = await Promise.all([
+    runtime.db
+      .select()
+      .from(runnerJobEvents)
+      .where(eq(runnerJobEvents.jobId, job.id))
+      .orderBy(runnerJobEvents.createdAt),
+    runtime.db
+      .select()
+      .from(runnerJobArtifacts)
+      .where(eq(runnerJobArtifacts.jobId, job.id))
+      .orderBy(runnerJobArtifacts.createdAt),
+  ]);
+
+  return c.json({
+    artifacts,
+    events,
+    job: toRunnerJobResponse(job),
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/cancel`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+  const body = cancelRunnerJobSchema.parse(await c.req.json());
+  const job = await getOrganizationRunnerJobRecord(
+    accessResult.access.organizationId,
+    params.jobId,
+  );
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  if (isRunnerJobTerminalStatus(job.status)) {
+    if (job.status === "cancelled") {
+      return c.json({ job: toRunnerJobResponse(job) });
+    }
+
+    return c.json({ error: "runner_job_already_terminal" }, 409);
+  }
+
+  const now = new Date();
+  const reason = body.reason ?? "operator requested cancellation";
+  const nextStatus = job.status === "queued" ? "cancelled" : "cancelling";
+  const [updatedJob] = await runtime.db
+    .update(runnerJobs)
+    .set({
+      completedAt: nextStatus === "cancelled" ? now : job.completedAt,
+      failureMessage: reason,
+      leaseExpiresAt: nextStatus === "cancelled" ? null : job.leaseExpiresAt,
+      status: nextStatus,
+      updatedAt: now,
+    })
+    .where(eq(runnerJobs.id, job.id))
+    .returning();
+
+  await runtime.db.insert(runnerJobEvents).values({
+    eventKind: nextStatus === "cancelled" ? "cancelled" : "cancellation_requested",
+    jobId: job.id,
+    level: "warn",
+    message: reason,
+    metadata: {
+      previousStatus: job.status,
+    },
+    runnerId: job.runnerId,
+  });
+
+  await recordActivityEvent({
+    actorUserId: accessResult.access.session.user.id,
+    description:
+      nextStatus === "cancelled"
+        ? `Runner job ${job.operation} was cancelled before claim.`
+        : `Runner job ${job.operation} cancellation was requested.`,
+    kind: "runner_job_cancelled",
+    metadata: {
+      jobId: job.id,
+      operation: job.operation,
+      previousStatus: job.status,
+    },
+    organizationId: accessResult.access.organizationId,
+    runId: job.runId,
+    status: nextStatus,
+    tenantId: job.tenantId,
+    title: job.operation,
+  });
+
+  return c.json({
+    job: toRunnerJobResponse(updatedJob),
+  });
 });
 
 app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/jobs/claim`, async (c) => {
@@ -4434,6 +4766,10 @@ app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/jobs/claim`, async (c) 
   const remainingCapacity = Math.max(0, authResult.runner.maxConcurrency - body.currentConcurrency);
   const claimCapacity = Math.min(body.capacity, remainingCapacity);
 
+  await sweepExpiredRunnerJobLeases({
+    organizationId: authResult.runner.organizationId,
+  });
+
   if (claimCapacity < 1 || allowedOperations.length === 0) {
     return c.json({
       job: null,
@@ -4446,6 +4782,7 @@ app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/jobs/claim`, async (c) 
     eq(runnerJobs.organizationId, authResult.runner.organizationId),
     eq(runnerJobs.status, "queued"),
     inArray(runnerJobs.operation, allowedOperations),
+    or(isNull(runnerJobs.assignedRunnerId), eq(runnerJobs.assignedRunnerId, authResult.runner.id)),
     or(isNull(runnerJobs.runnerId), eq(runnerJobs.runnerId, authResult.runner.id)),
   ];
 
@@ -4473,6 +4810,7 @@ app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/jobs/claim`, async (c) 
     .update(runnerJobs)
     .set({
       leaseExpiresAt,
+      assignedRunnerId: candidate.assignedRunnerId ?? candidate.runnerId,
       runnerId: authResult.runner.id,
       sessionId: authResult.session.id,
       status: "leased",
@@ -4507,6 +4845,48 @@ app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/jobs/claim`, async (c) 
   });
 });
 
+app.get(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/cancellation`, async (c) => {
+  const authResult = await requireRunnerSession(c);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+  runnerJobCancellationQuerySchema.parse({
+    protocolVersion: c.req.query("protocolVersion"),
+  });
+
+  const job = await getRunnerOwnedJob({
+    jobId: params.jobId,
+    runnerId: authResult.runner.id,
+  });
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  const now = new Date();
+  if (runnerJobLeaseIsExpired(job, now)) {
+    await sweepExpiredRunnerJobLeases({
+      organizationId: authResult.runner.organizationId,
+      now,
+    });
+
+    return c.json({
+      cancelled: true,
+      job: {
+        status: "queued",
+      },
+      reason: "runner job lease expired",
+    });
+  }
+
+  return c.json(runnerJobCancellationResponse(job));
+});
+
 app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/lease`, async (c) => {
   const authResult = await requireRunnerSession(c);
 
@@ -4527,15 +4907,30 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/lease`, async (c) => {
     return c.json({ error: "runner_job_not_found" }, 404);
   }
 
+  const now = new Date();
+  if (runnerJobLeaseIsExpired(job, now)) {
+    await sweepExpiredRunnerJobLeases({
+      organizationId: authResult.runner.organizationId,
+      now,
+    });
+
+    return c.json({ error: "runner_job_lease_expired" }, 409);
+  }
+
   if (body.action === "cancel") {
+    if (!runnerJobLeaseMutationAllowed(job, now)) {
+      return c.json({ error: "runner_job_not_leased" }, 409);
+    }
+
     const [cancelledJob] = await runtime.db
       .update(runnerJobs)
       .set({
-        completedAt: new Date(),
+        completedAt: now,
+        failureMessage: job.failureMessage ?? "runner cancelled the leased job",
         leaseExpiresAt: null,
         sessionId: authResult.session.id,
         status: "cancelled",
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(runnerJobs.id, job.id))
       .returning();
@@ -4551,18 +4946,22 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/lease`, async (c) => {
     return c.json({ job: toRunnerJobResponse(cancelledJob) });
   }
 
-  if (!["leased", "running"].includes(job.status)) {
+  if (job.status === "cancelling") {
+    return c.json({ error: "runner_job_cancellation_requested" }, 409);
+  }
+
+  if (!runnerJobLeaseMutationAllowed(job, now)) {
     return c.json({ error: "runner_job_not_leased" }, 409);
   }
 
-  const leaseExpiresAt = nextRunnerLeaseExpiry(body.leaseSeconds);
+  const leaseExpiresAt = nextRunnerLeaseExpiry(body.leaseSeconds, now);
   const [updatedJob] = await runtime.db
     .update(runnerJobs)
     .set({
       leaseExpiresAt,
       sessionId: authResult.session.id,
       status: job.status === "leased" ? "running" : job.status,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(runnerJobs.id, job.id))
     .returning();
@@ -4603,13 +5002,27 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/events`, async (c) => 
     return c.json({ error: "runner_job_not_found" }, 404);
   }
 
+  const now = new Date();
+  if (runnerJobLeaseIsExpired(job, now)) {
+    await sweepExpiredRunnerJobLeases({
+      organizationId: authResult.runner.organizationId,
+      now,
+    });
+
+    return c.json({ error: "runner_job_lease_expired" }, 409);
+  }
+
+  if (!runnerJobLeaseMutationAllowed(job, now)) {
+    return c.json({ error: "runner_job_not_active" }, 409);
+  }
+
   if (body.eventKind === "started" && job.status === "leased") {
     await runtime.db
       .update(runnerJobs)
       .set({
         sessionId: authResult.session.id,
         status: "running",
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(runnerJobs.id, job.id));
   }
@@ -4653,16 +5066,35 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/complete`, async (c) =
     return c.json({ error: "runner_job_already_terminal" }, 409);
   }
 
+  const now = new Date();
+  if (runnerJobLeaseIsExpired(job, now)) {
+    await sweepExpiredRunnerJobLeases({
+      organizationId: authResult.runner.organizationId,
+      now,
+    });
+
+    return c.json({ error: "runner_job_lease_expired" }, 409);
+  }
+
+  if (!runnerJobLeaseMutationAllowed(job, now)) {
+    return c.json({ error: "runner_job_not_active" }, 409);
+  }
+
+  if (job.status === "cancelling" && body.status !== "cancelled") {
+    return c.json({ error: "runner_job_cancellation_requested" }, 409);
+  }
+
   const [updatedJob] = await runtime.db
     .update(runnerJobs)
     .set({
-      completedAt: new Date(),
-      failureMessage: body.failureMessage ?? null,
+      completedAt: now,
+      failureMessage:
+        body.failureMessage ?? (body.status === "cancelled" ? job.failureMessage : null),
       leaseExpiresAt: null,
       result: toRunnerMetadata(body.result),
       sessionId: authResult.session.id,
       status: body.status,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(runnerJobs.id, job.id))
     .returning();
@@ -4699,6 +5131,20 @@ app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/artifacts`, async (c) 
 
   if (!job) {
     return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  const now = new Date();
+  if (runnerJobLeaseIsExpired(job, now)) {
+    await sweepExpiredRunnerJobLeases({
+      organizationId: authResult.runner.organizationId,
+      now,
+    });
+
+    return c.json({ error: "runner_job_lease_expired" }, 409);
+  }
+
+  if (!runnerJobLeaseMutationAllowed(job, now)) {
+    return c.json({ error: "runner_job_not_active" }, 409);
   }
 
   const artifacts = await runtime.db
