@@ -24,16 +24,20 @@ import { Button } from "@firapps/ui/components/button";
 
 import { authClient } from "../lib/auth-client";
 import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
-import { loadMemberScopedRuns, type MemberRunScope } from "../lib/member-scoped-runs";
+import {
+  clearCustomerMemberRunsSnapshot,
+  clearCustomerOperationsSnapshot,
+  refreshCustomerOperationsSnapshot,
+  useCustomerMemberRunsCollection,
+  useCustomerOperationsCollection,
+  type MemberRunScope,
+} from "../lib/customer-product-data";
 import { toErrorMessage } from "../lib/customer-auth";
 import {
-  type ActivityItem,
   type LoadStatus,
   type RunRecord,
   formatDate,
   getRunPullRequestUrl,
-  normalizeActivity,
-  requestInternalApi,
   runTone,
   statusTone,
 } from "../lib/internal-control-plane";
@@ -52,10 +56,13 @@ function RunsRoute() {
 
   const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
   const [runError, setRunError] = useState<string | null>(null);
-  const [organizationRuns, setOrganizationRuns] = useState<RunRecord[]>([]);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [scope, setScope] = useState<MemberRunScope | null>(null);
+  const dataEnabled = Boolean(session && activeOrganization?.id);
+  const memberRunCollection = useCustomerMemberRunsCollection(dataEnabled);
+  const operationsCollection = useCustomerOperationsCollection(dataEnabled);
+  const organizationRuns = dataEnabled ? memberRunCollection.organizationRuns : [];
+  const runs = dataEnabled ? memberRunCollection.runs : [];
+  const activity = dataEnabled ? operationsCollection.activity : [];
 
   if (location.pathname !== "/runs") {
     return <Outlet />;
@@ -65,10 +72,11 @@ function RunsRoute() {
     if (!session || !activeOrganization?.id) {
       setRunStatus("idle");
       setRunError(null);
-      setOrganizationRuns([]);
-      setRuns([]);
-      setActivity([]);
       setScope(null);
+      void Promise.all([
+        clearCustomerMemberRunsSnapshot(),
+        clearCustomerOperationsSnapshot(),
+      ]).catch(() => undefined);
       return;
     }
 
@@ -88,28 +96,21 @@ function RunsRoute() {
     setRunError(null);
 
     try {
-      const [memberRunsResult, activityPayload] = await Promise.all([
-        loadMemberScopedRuns({
-          email: session.user.email,
-          userId: session.user.id,
-        }),
-        requestInternalApi("/activity"),
-      ]);
+      const memberRunsResult = await refreshCustomerOperationsSnapshot({
+        email: session.user.email,
+        userId: session.user.id,
+      });
 
-      setOrganizationRuns(memberRunsResult.organizationRuns);
-      setRuns(memberRunsResult.runs);
       setScope(memberRunsResult.scope);
-      setActivity(
-        normalizeActivity((activityPayload as { activity?: unknown[] } | null)?.activity),
-      );
       setRunStatus("ready");
     } catch (caughtError) {
       setRunStatus("error");
       setRunError(toErrorMessage(caughtError, "Unable to load run history."));
-      setOrganizationRuns([]);
-      setRuns([]);
-      setActivity([]);
       setScope(null);
+      await Promise.all([
+        clearCustomerMemberRunsSnapshot(),
+        clearCustomerOperationsSnapshot(),
+      ]).catch(() => undefined);
     }
   }
 

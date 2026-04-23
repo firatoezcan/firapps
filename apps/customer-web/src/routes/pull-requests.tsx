@@ -24,7 +24,12 @@ import { Button } from "@firapps/ui/components/button";
 
 import { authClient } from "../lib/auth-client";
 import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
-import { loadMemberScopedRuns, type MemberRunScope } from "../lib/member-scoped-runs";
+import {
+  clearCustomerMemberRunsSnapshot,
+  refreshCustomerMemberRunsSnapshot,
+  useCustomerMemberRunsCollection,
+  type MemberRunScope,
+} from "../lib/customer-product-data";
 import { toErrorMessage } from "../lib/customer-auth";
 import {
   type LoadStatus,
@@ -49,17 +54,18 @@ function PullRequestsRoute() {
 
   const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
   const [runError, setRunError] = useState<string | null>(null);
-  const [organizationRuns, setOrganizationRuns] = useState<RunRecord[]>([]);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
   const [scope, setScope] = useState<MemberRunScope | null>(null);
+  const dataEnabled = Boolean(session && activeOrganization?.id);
+  const memberRunCollection = useCustomerMemberRunsCollection(dataEnabled);
+  const organizationRuns = dataEnabled ? memberRunCollection.organizationRuns : [];
+  const runs = dataEnabled ? memberRunCollection.runs : [];
 
   useEffect(() => {
     if (!session || !activeOrganization?.id) {
       setRunStatus("idle");
       setRunError(null);
-      setOrganizationRuns([]);
-      setRuns([]);
       setScope(null);
+      void clearCustomerMemberRunsSnapshot().catch(() => undefined);
       return;
     }
 
@@ -99,21 +105,18 @@ function PullRequestsRoute() {
     setRunError(null);
 
     try {
-      const memberRunsResult = await loadMemberScopedRuns({
+      const memberRunsResult = await refreshCustomerMemberRunsSnapshot({
         email: session.user.email,
         userId: session.user.id,
       });
 
-      setOrganizationRuns(memberRunsResult.organizationRuns);
-      setRuns(memberRunsResult.runs);
       setScope(memberRunsResult.scope);
       setRunStatus("ready");
     } catch (caughtError) {
       setRunStatus("error");
       setRunError(toErrorMessage(caughtError, "Unable to load pull request visibility."));
-      setOrganizationRuns([]);
-      setRuns([]);
       setScope(null);
+      await clearCustomerMemberRunsSnapshot().catch(() => undefined);
     }
   }
 

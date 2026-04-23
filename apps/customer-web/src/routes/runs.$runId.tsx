@@ -29,7 +29,12 @@ import { Button } from "@firapps/ui/components/button";
 import { authClient } from "../lib/auth-client";
 import { toErrorMessage } from "../lib/customer-auth";
 import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
-import { loadMemberScopedRuns, type MemberRunScope } from "../lib/member-scoped-runs";
+import {
+  clearCustomerRunDetailSnapshot,
+  refreshCustomerRunDetailSnapshot,
+  useCustomerRunDetailCollection,
+  type MemberRunScope,
+} from "../lib/customer-product-data";
 import {
   type LoadStatus,
   type RunArtifact,
@@ -39,8 +44,6 @@ import {
   formatDate,
   getRunLastActivityAt,
   getRunPullRequestUrl,
-  normalizeRun,
-  requestInternalApi,
   runTone,
   statusTone,
   workspaceTone,
@@ -60,16 +63,18 @@ function RunDetailRoute() {
 
   const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
   const [runError, setRunError] = useState<string | null>(null);
-  const [run, setRun] = useState<RunRecord | null>(null);
   const [scope, setScope] = useState<MemberRunScope | null>(null);
+  const dataEnabled = Boolean(session && activeOrganization?.id);
+  const runDetailCollection = useCustomerRunDetailCollection(dataEnabled, params.runId);
+  const run = dataEnabled ? runDetailCollection.run : null;
   const outcomeSummary = run ? getRunOutcomeSummary(run) : null;
 
   useEffect(() => {
     if (!session || !activeOrganization?.id) {
       setRunStatus("idle");
       setRunError(null);
-      setRun(null);
       setScope(null);
+      void clearCustomerRunDetailSnapshot().catch(() => undefined);
       return;
     }
 
@@ -85,33 +90,18 @@ function RunDetailRoute() {
     setRunError(null);
 
     try {
-      const memberRunsResult = await loadMemberScopedRuns({
+      const result = await refreshCustomerRunDetailSnapshot(params.runId, {
         email: session.user.email,
         userId: session.user.id,
       });
-      const visibleRun = memberRunsResult.runs.find((candidate) => candidate.id === params.runId);
 
-      if (!visibleRun) {
-        throw new Error("This run is not visible for the current member session.");
-      }
-
-      const payload = (await requestInternalApi(`/runs/${encodeURIComponent(params.runId)}`)) as {
-        run?: unknown;
-      } | null;
-      const detail = payload?.run ? normalizeRun(payload.run) : null;
-
-      if (!detail) {
-        throw new Error("The selected run detail payload was empty.");
-      }
-
-      setRun(detail);
-      setScope(memberRunsResult.scope);
+      setScope(result.scope);
       setRunStatus("ready");
     } catch (caughtError) {
       setRunStatus("error");
       setRunError(toErrorMessage(caughtError, "Unable to load member-scoped run detail."));
-      setRun(null);
       setScope(null);
+      await clearCustomerRunDetailSnapshot().catch(() => undefined);
     }
   }
 

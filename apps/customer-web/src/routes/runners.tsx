@@ -30,11 +30,15 @@ import { authClient } from "../lib/auth-client";
 import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
 import { toErrorMessage } from "../lib/customer-auth";
 import {
+  clearCustomerRunnersSnapshot,
+  refreshCustomerRunnersSnapshot,
+  useCustomerRunnersCollection,
+} from "../lib/customer-product-data";
+import {
   type LoadStatus,
   type RunnerRecord,
   formatDate,
   formatRunnerStatus,
-  listRunners,
   runnerTone,
 } from "../lib/internal-control-plane";
 
@@ -55,13 +59,15 @@ function RunnersRoute() {
 
   const [runnerStatus, setRunnerStatus] = useState<LoadStatus>("idle");
   const [runnerError, setRunnerError] = useState<string | null>(null);
-  const [runners, setRunners] = useState<RunnerRecord[]>([]);
+  const dataEnabled = Boolean(session && activeOrganization?.id);
+  const runnerCollection = useCustomerRunnersCollection(dataEnabled);
+  const runners = dataEnabled ? runnerCollection.runners : [];
 
   useEffect(() => {
     if (!session || !activeOrganization?.id) {
       setRunnerStatus("idle");
       setRunnerError(null);
-      setRunners([]);
+      void clearCustomerRunnersSnapshot().catch(() => undefined);
       return;
     }
 
@@ -89,7 +95,7 @@ function RunnersRoute() {
     setRunnerError(null);
 
     try {
-      setRunners(await listRunners());
+      await refreshCustomerRunnersSnapshot();
       setRunnerStatus("ready");
     } catch (caughtError) {
       setRunnerStatus("error");
@@ -99,7 +105,7 @@ function RunnersRoute() {
           "Unable to load runner status. The runner API may still be in backend implementation.",
         ),
       );
-      setRunners([]);
+      await clearCustomerRunnersSnapshot().catch(() => undefined);
     }
   }
 

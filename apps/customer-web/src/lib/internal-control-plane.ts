@@ -199,12 +199,6 @@ export async function requestInternalApi(path: string, init: RequestInit = {}) {
   return response.json();
 }
 
-export async function listRunners() {
-  const payload = (await requestInternalApi("/runners")) as { runners?: unknown[] } | null;
-
-  return normalizeRunners(payload?.runners);
-}
-
 async function readInternalApiError(response: Response) {
   const contentType = response.headers.get("content-type") ?? "";
 

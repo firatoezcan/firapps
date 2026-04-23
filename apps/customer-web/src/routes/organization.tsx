@@ -27,19 +27,24 @@ import { Button } from "@firapps/ui/components/button";
 import { authClient } from "../lib/auth-client";
 import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
 import { toErrorMessage, toRoleLabel } from "../lib/customer-auth";
-import { loadMemberScopedRuns, type MemberRunScope } from "../lib/member-scoped-runs";
+import {
+  clearCustomerMemberRunsSnapshot,
+  clearCustomerProjectsSnapshot,
+  clearCustomerWorkspacesSnapshot,
+  refreshCustomerMemberRunsSnapshot,
+  refreshCustomerProjectsSnapshot,
+  refreshCustomerWorkspacesSnapshot,
+  useCustomerMemberRunsCollection,
+  useCustomerProjectsCollection,
+  useCustomerWorkspacesCollection,
+  type MemberRunScope,
+} from "../lib/customer-product-data";
 import {
   type LoadStatus,
-  type Project,
-  type RunRecord,
-  type Workspace,
   formatDate,
   getRunPullRequestUrl,
-  normalizeProjects,
   projectTone,
-  normalizeWorkspaces,
   runTone,
-  requestInternalApi,
   workspaceIsReady,
   workspaceTone,
 } from "../lib/internal-control-plane";
@@ -65,10 +70,6 @@ type OrganizationInvitation = {
   status: string;
 };
 
-type WorkspaceRow = Workspace & {
-  projectName: string;
-};
-
 export const Route = createFileRoute("/organization")({
   component: OrganizationRoute,
 });
@@ -91,12 +92,16 @@ function OrganizationRoute() {
 
   const [workspaceStatus, setWorkspaceStatus] = useState<LoadStatus>("idle");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
   const [memberWorkStatus, setMemberWorkStatus] = useState<LoadStatus>("idle");
   const [memberWorkError, setMemberWorkError] = useState<string | null>(null);
-  const [memberRuns, setMemberRuns] = useState<RunRecord[]>([]);
   const [memberRunScope, setMemberRunScope] = useState<MemberRunScope | null>(null);
+  const dataEnabled = Boolean(session && activeOrganization?.id);
+  const projectCollection = useCustomerProjectsCollection(dataEnabled);
+  const workspaceCollection = useCustomerWorkspacesCollection(dataEnabled);
+  const memberRunCollection = useCustomerMemberRunsCollection(dataEnabled);
+  const projects = dataEnabled ? projectCollection.projects : [];
+  const workspaces = dataEnabled ? workspaceCollection.workspaces : [];
+  const memberRuns = dataEnabled ? memberRunCollection.runs : [];
 
   useEffect(() => {
     if (!session) {
@@ -106,12 +111,14 @@ function OrganizationRoute() {
       setInvitations([]);
       setWorkspaceStatus("idle");
       setWorkspaceError(null);
-      setProjects([]);
-      setWorkspaces([]);
       setMemberWorkStatus("idle");
       setMemberWorkError(null);
-      setMemberRuns([]);
       setMemberRunScope(null);
+      void Promise.all([
+        clearCustomerProjectsSnapshot(),
+        clearCustomerWorkspacesSnapshot(),
+        clearCustomerMemberRunsSnapshot(),
+      ]).catch(() => undefined);
       return;
     }
 
@@ -122,12 +129,14 @@ function OrganizationRoute() {
       setWorkspaceError(null);
       setMembers([]);
       setInvitations([]);
-      setProjects([]);
-      setWorkspaces([]);
       setMemberWorkStatus("ready");
       setMemberWorkError(null);
-      setMemberRuns([]);
       setMemberRunScope(null);
+      void Promise.all([
+        clearCustomerProjectsSnapshot(),
+        clearCustomerWorkspacesSnapshot(),
+        clearCustomerMemberRunsSnapshot(),
+      ]).catch(() => undefined);
       return;
     }
 
@@ -222,39 +231,22 @@ function OrganizationRoute() {
     setWorkspaceError(null);
 
     try {
-      const projectsPayload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-      const nextProjects = normalizeProjects(projectsPayload?.projects);
-
-      setProjects(nextProjects);
+      const nextProjects = await refreshCustomerProjectsSnapshot();
 
       if (nextProjects.length === 0) {
-        setWorkspaces([]);
+        await clearCustomerWorkspacesSnapshot();
         setWorkspaceStatus("ready");
         return;
       }
 
-      const workspacePayloads = await Promise.all(
-        nextProjects.map(async (project) => {
-          const payload = (await requestInternalApi(
-            `/workspaces?tenantId=${encodeURIComponent(project.id)}`,
-          )) as { workspaces?: unknown[] } | null;
-
-          return normalizeWorkspaces(payload?.workspaces).map((workspace) => ({
-            ...workspace,
-            projectName: project.name,
-          }));
-        }),
-      );
-
-      setWorkspaces(workspacePayloads.flat());
+      await refreshCustomerWorkspacesSnapshot(nextProjects);
       setWorkspaceStatus("ready");
     } catch (caughtError) {
       setWorkspaceStatus("error");
       setWorkspaceError(toErrorMessage(caughtError, "Unable to load organization projects."));
-      setProjects([]);
-      setWorkspaces([]);
+      await Promise.all([clearCustomerProjectsSnapshot(), clearCustomerWorkspacesSnapshot()]).catch(
+        () => undefined,
+      );
     }
   }
 
@@ -267,19 +259,18 @@ function OrganizationRoute() {
     setMemberWorkError(null);
 
     try {
-      const result = await loadMemberScopedRuns({
+      const result = await refreshCustomerMemberRunsSnapshot({
         email: session.user.email,
         userId: session.user.id,
       });
 
-      setMemberRuns(result.runs);
       setMemberRunScope(result.scope);
       setMemberWorkStatus("ready");
     } catch (caughtError) {
       setMemberWorkStatus("error");
       setMemberWorkError(toErrorMessage(caughtError, "Unable to load assigned work."));
-      setMemberRuns([]);
       setMemberRunScope(null);
+      await clearCustomerMemberRunsSnapshot().catch(() => undefined);
     }
   }
 

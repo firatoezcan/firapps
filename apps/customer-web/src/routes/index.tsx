@@ -33,47 +33,33 @@ import { buildAdminRouteHref, resolveAdminOrigin } from "../lib/admin-origin";
 import { CustomerRouteNavigation, customerRouteGroups } from "../lib/customer-route-navigation";
 import { buildCustomerPath, toErrorMessage, toRoleLabel } from "../lib/customer-auth";
 import {
-  type ActivityItem,
+  type CustomerWorkspaceAccess,
+  type MemberRunScope,
+  clearCustomerOperationsSnapshot,
+  clearCustomerProjectsSnapshot,
+  clearCustomerWorkspacesSnapshot,
+  refreshCustomerOperationsSnapshot,
+  refreshCustomerProjectsSnapshot,
+  refreshCustomerPublicCatalogSnapshot,
+  refreshCustomerWorkspacesSnapshot,
+  useCustomerOperationsCollection,
+  useCustomerProjectsCollection,
+  useCustomerPublicCatalogCollection,
+  useCustomerWorkspacesCollection,
+} from "../lib/customer-product-data";
+import {
   type LoadStatus,
   type Overview,
   type Project,
   type RunRecord,
-  type Workspace,
   formatDate,
   getRunPullRequestUrl,
-  normalizeActivity,
-  normalizeOverview,
-  normalizeProjects,
-  normalizeWorkspaces,
   projectTone,
-  requestInternalApi,
   runTone,
   statusTone,
   workspaceIsReady,
   workspaceTone,
 } from "../lib/internal-control-plane";
-import { loadMemberScopedRuns, type MemberRunScope } from "../lib/member-scoped-runs";
-
-type Product = {
-  id: string;
-  slug: string;
-  name: string;
-  priceCents: number;
-  status: string;
-  featured: boolean;
-};
-
-type Announcement = {
-  id: string;
-  title: string;
-  body: string;
-  tone: "neutral" | "success" | "warning" | "danger";
-};
-
-type PublicApiState = {
-  announcements: Announcement[];
-  products: Product[];
-};
 
 type InvitationRecord = NonNullable<
   Awaited<ReturnType<typeof authClient.organization.listUserInvitations>>["data"]
@@ -89,10 +75,7 @@ type InvitationSummary = {
   expiresAt: string;
 };
 
-type WorkspaceAccessItem = Workspace & {
-  projectName: string;
-  projectSlug: string;
-};
+type WorkspaceAccessItem = CustomerWorkspaceAccess;
 
 type ActiveOrganizationSummary = {
   id: string;
@@ -102,11 +85,6 @@ type ActiveOrganizationSummary = {
 
 type CustomerLandingSearch = {
   adminReturn?: string;
-};
-
-const defaultState: PublicApiState = {
-  announcements: [],
-  products: [],
 };
 
 const emptyOverview: Overview = {
@@ -224,7 +202,6 @@ function CustomerLanding() {
   const [resolvedActiveOrganization, setResolvedActiveOrganization] =
     useState<ActiveOrganizationSummary | null>(toResolvedOrganizationSummary(activeOrganization));
 
-  const [state, setState] = useState<PublicApiState>(defaultState);
   const [status, setStatus] = useState<LoadStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [invitations, setInvitations] = useState<InvitationSummary[]>([]);
@@ -232,16 +209,11 @@ function CustomerLanding() {
   const [invitationError, setInvitationError] = useState<string | null>(null);
   const [projectStatus, setProjectStatus] = useState<LoadStatus>("idle");
   const [projectError, setProjectError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [opsStatus, setOpsStatus] = useState<LoadStatus>("idle");
   const [opsError, setOpsError] = useState<string | null>(null);
-  const [overview, setOverview] = useState<Overview>(emptyOverview);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
   const [memberRunScope, setMemberRunScope] = useState<MemberRunScope | null>(null);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [workspaceStatus, setWorkspaceStatus] = useState<LoadStatus>("idle");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceAccessItem[]>([]);
   const [notice, setNotice] = useState<{
     message: string;
     tone: "danger" | "success";
@@ -265,6 +237,16 @@ function CustomerLanding() {
     }>;
   };
   const currentSession = resolvedSession ?? session ?? null;
+  const productDataEnabled = Boolean(currentSession && resolvedActiveOrganization?.id);
+  const publicCatalog = useCustomerPublicCatalogCollection(true);
+  const projectCollection = useCustomerProjectsCollection(productDataEnabled);
+  const workspaceCollection = useCustomerWorkspacesCollection(productDataEnabled);
+  const operationsCollection = useCustomerOperationsCollection(productDataEnabled);
+  const activity = operationsCollection.activity;
+  const overview = productDataEnabled ? operationsCollection.overview : emptyOverview;
+  const projects = productDataEnabled ? projectCollection.projects : [];
+  const runs = productDataEnabled ? operationsCollection.runs : [];
+  const workspaces = productDataEnabled ? workspaceCollection.workspaces : [];
   const adminReturnPath = normalizeAdminReturnPath(search.adminReturn);
   const adminReturnHref = buildAdminReturnHref(adminReturnPath);
   const adminProjectSetupHref = buildAdminRouteHref("/projects");
@@ -277,28 +259,7 @@ function CustomerLanding() {
     setError(null);
 
     try {
-      const [productsResponse, announcementsResponse] = await Promise.all([
-        fetch(`${publicApiBasePath}/products`),
-        fetch(`${publicApiBasePath}/announcements`),
-      ]);
-
-      if (!productsResponse.ok || !announcementsResponse.ok) {
-        throw new Error(
-          `public API returned ${productsResponse.status}/${announcementsResponse.status}`,
-        );
-      }
-
-      const productsPayload = (await productsResponse.json()) as {
-        products: Product[];
-      };
-      const announcementsPayload = (await announcementsResponse.json()) as {
-        announcements: Announcement[];
-      };
-
-      setState({
-        announcements: announcementsPayload.announcements,
-        products: productsPayload.products,
-      });
+      await refreshCustomerPublicCatalogSnapshot();
       setStatus("ready");
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
@@ -311,16 +272,16 @@ function CustomerLanding() {
   function resetPersonalSurface(nextStatus: LoadStatus) {
     setProjectStatus(nextStatus);
     setProjectError(null);
-    setProjects([]);
     setOpsStatus(nextStatus);
     setOpsError(null);
-    setOverview(emptyOverview);
-    setRuns([]);
     setMemberRunScope(null);
-    setActivity([]);
     setWorkspaceStatus(nextStatus);
     setWorkspaceError(null);
-    setWorkspaces([]);
+    void Promise.all([
+      clearCustomerProjectsSnapshot(),
+      clearCustomerOperationsSnapshot(),
+      clearCustomerWorkspacesSnapshot(),
+    ]).catch(() => undefined);
   }
 
   async function refreshProjects() {
@@ -328,12 +289,8 @@ function CustomerLanding() {
     setProjectError(null);
 
     try {
-      const payload = (await requestInternalApi("/projects")) as {
-        projects?: unknown[];
-      } | null;
-      const nextProjects = normalizeProjects(payload?.projects);
+      const nextProjects = await refreshCustomerProjectsSnapshot();
 
-      setProjects(nextProjects);
       setProjectStatus("ready");
 
       return nextProjects;
@@ -342,9 +299,9 @@ function CustomerLanding() {
       setProjectError(
         toErrorMessage(caughtError, "Unable to load projects for this organization."),
       );
-      setProjects([]);
+      await clearCustomerProjectsSnapshot().catch(() => undefined);
 
-      return [] satisfies Project[];
+      return [];
     }
   }
 
@@ -352,7 +309,7 @@ function CustomerLanding() {
     if (projectList.length === 0) {
       setWorkspaceStatus("ready");
       setWorkspaceError(null);
-      setWorkspaces([]);
+      await clearCustomerWorkspacesSnapshot().catch(() => undefined);
       return;
     }
 
@@ -360,38 +317,14 @@ function CustomerLanding() {
     setWorkspaceError(null);
 
     try {
-      const payloads = await Promise.all(
-        projectList.map(async (project) => {
-          const payload = (await requestInternalApi(
-            `/workspaces?tenantId=${encodeURIComponent(project.id)}`,
-          )) as {
-            workspaces?: unknown[];
-          } | null;
-
-          return normalizeWorkspaces(payload?.workspaces).map((workspace) => ({
-            ...workspace,
-            projectName: project.name,
-            projectSlug: project.slug,
-          }));
-        }),
-      );
-
-      const nextWorkspaces = payloads
-        .flat()
-        .sort(
-          (left, right) =>
-            toTimestamp(right.updatedAt ?? right.createdAt) -
-            toTimestamp(left.updatedAt ?? left.createdAt),
-        );
-
-      setWorkspaces(nextWorkspaces);
+      await refreshCustomerWorkspacesSnapshot(projectList);
       setWorkspaceStatus("ready");
     } catch (caughtError) {
       setWorkspaceStatus("error");
       setWorkspaceError(
         toErrorMessage(caughtError, "Unable to load workspace access for this organization."),
       );
-      setWorkspaces([]);
+      await clearCustomerWorkspacesSnapshot().catch(() => undefined);
     }
   }
 
@@ -399,10 +332,8 @@ function CustomerLanding() {
     if (!activeSession) {
       setOpsStatus("idle");
       setOpsError(null);
-      setOverview(emptyOverview);
-      setRuns([]);
       setMemberRunScope(null);
-      setActivity([]);
+      await clearCustomerOperationsSnapshot().catch(() => undefined);
       return;
     }
 
@@ -410,31 +341,20 @@ function CustomerLanding() {
     setOpsError(null);
 
     try {
-      const [overviewPayload, memberScopedRuns, activityPayload] = await Promise.all([
-        requestInternalApi("/overview"),
-        loadMemberScopedRuns({
-          email: activeSession.user.email,
-          userId: activeSession.user.id,
-        }),
-        requestInternalApi("/activity"),
-      ]);
+      const nextOperations = await refreshCustomerOperationsSnapshot({
+        email: activeSession.user.email,
+        userId: activeSession.user.id,
+      });
 
-      setOverview(normalizeOverview((overviewPayload as { overview?: unknown } | null)?.overview));
-      setRuns(memberScopedRuns.runs);
-      setMemberRunScope(memberScopedRuns.scope);
-      setActivity(
-        normalizeActivity((activityPayload as { activity?: unknown[] } | null)?.activity),
-      );
+      setMemberRunScope(nextOperations.scope);
       setOpsStatus("ready");
     } catch (caughtError) {
       setOpsStatus("error");
       setOpsError(
         toErrorMessage(caughtError, "Unable to load your projects, runs, and activity surface."),
       );
-      setOverview(emptyOverview);
-      setRuns([]);
       setMemberRunScope(null);
-      setActivity([]);
+      await clearCustomerOperationsSnapshot().catch(() => undefined);
     }
   }
 
@@ -1811,13 +1731,13 @@ function CustomerLanding() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {state.announcements.length === 0 && state.products.length === 0 ? (
+            {publicCatalog.announcements.length === 0 && publicCatalog.products.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {error ?? "No public updates returned yet."}
               </p>
             ) : (
               <>
-                {state.announcements.map((announcement) => (
+                {publicCatalog.announcements.map((announcement) => (
                   <div
                     className="rounded-xl border border-border/60 bg-muted/20 p-4"
                     key={announcement.id}
@@ -1830,7 +1750,7 @@ function CustomerLanding() {
                   </div>
                 ))}
 
-                {state.products
+                {publicCatalog.products
                   .filter((product) => product.featured)
                   .map((product) => (
                     <div
@@ -1924,16 +1844,6 @@ function formatRepository(
   }
 
   return `${provider ?? "repo"} · ${owner}/${repo}`;
-}
-
-function toTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return 0;
-  }
-
-  const timestamp = new Date(value).getTime();
-
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 const publicApiBasePath = "/api/public";
