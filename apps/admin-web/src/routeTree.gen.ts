@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as RunsRouteImport } from './routes/runs'
+import { Route as RunnersRouteImport } from './routes/runners'
 import { Route as QueueRouteImport } from './routes/queue'
 import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as ProjectsRouteImport } from './routes/projects'
@@ -28,6 +29,11 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 const RunsRoute = RunsRouteImport.update({
   id: '/runs',
   path: '/runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RunnersRoute = RunnersRouteImport.update({
+  id: '/runners',
+  path: '/runners',
   getParentRoute: () => rootRouteImport,
 } as any)
 const QueueRoute = QueueRouteImport.update({
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/projects': typeof ProjectsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/queue': typeof QueueRoute
+  '/runners': typeof RunnersRoute
   '/runs': typeof RunsRouteWithChildren
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/projects': typeof ProjectsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/queue': typeof QueueRoute
+  '/runners': typeof RunnersRoute
   '/runs': typeof RunsRouteWithChildren
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/projects': typeof ProjectsRoute
   '/pull-requests': typeof PullRequestsRoute
   '/queue': typeof QueueRoute
+  '/runners': typeof RunnersRoute
   '/runs': typeof RunsRouteWithChildren
   '/runs/$runId': typeof RunsRunIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/pull-requests'
     | '/queue'
+    | '/runners'
     | '/runs'
     | '/runs/$runId'
     | '/api/auth/$'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/pull-requests'
     | '/queue'
+    | '/runners'
     | '/runs'
     | '/runs/$runId'
     | '/api/auth/$'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/pull-requests'
     | '/queue'
+    | '/runners'
     | '/runs'
     | '/runs/$runId'
     | '/api/auth/$'
@@ -219,6 +231,7 @@ export interface RootRouteChildren {
   ProjectsRoute: typeof ProjectsRoute
   PullRequestsRoute: typeof PullRequestsRoute
   QueueRoute: typeof QueueRoute
+  RunnersRoute: typeof RunnersRoute
   RunsRoute: typeof RunsRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiInternalSplatRoute: typeof ApiInternalSplatRoute
@@ -231,6 +244,13 @@ declare module '@tanstack/react-router' {
       path: '/runs'
       fullPath: '/runs'
       preLoaderRoute: typeof RunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/runners': {
+      id: '/runners'
+      path: '/runners'
+      fullPath: '/runners'
+      preLoaderRoute: typeof RunnersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/queue': {
@@ -356,6 +376,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsRoute: ProjectsRoute,
   PullRequestsRoute: PullRequestsRoute,
   QueueRoute: QueueRoute,
+  RunnersRoute: RunnersRoute,
   RunsRoute: RunsRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiInternalSplatRoute: ApiInternalSplatRoute,

@@ -60,6 +60,15 @@
   concrete first-project -> Blueprint -> run -> review setup sequence, and
   signed-out deep links on core control-plane routes hand users back through
   the Better Auth customer sign-in path
+- `apps/admin-web` and `apps/customer-web` now expose `/runners` UI surfaces
+  for the user-installed Docker runner lane: `internal-api` owns the MVP
+  control-plane schema and structured protocol surfaces for runner
+  registration, one-time API-key issuance, hashed key/session storage,
+  runner heartbeats, polling leases, structured job creation, append-only
+  events, typed results, typed artifacts, and revocation; admin-web owns
+  registration/status/API-key handoff UX, customer-web exposes read-only
+  status and install guidance, and this repo still does not implement the
+  runner daemon image or firops runtime worker
 - the first frontend TanStack DB + ElectricSQL slice now lives on
   `apps/admin-web` `/queue`: org-scoped queue runs, dispatches, projects,
   blueprints, workspaces, run-step counts, and activity can sync through

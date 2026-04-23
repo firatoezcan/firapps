@@ -113,6 +113,25 @@ export type ActivityItem = {
   occurredAt?: string | null;
 };
 
+export type RunnerRecord = {
+  allowedOperations: string[];
+  apiKeyCreatedAt?: string | null;
+  createdAt?: string | null;
+  currentConcurrency?: number | null;
+  displayName: string;
+  hostLabel?: string | null;
+  id: string;
+  imageDigest?: string | null;
+  imageVersion?: string | null;
+  lastHeartbeatAt?: string | null;
+  maxConcurrency: number;
+  projectIds: string[];
+  repositorySelectors: string[];
+  revokedAt?: string | null;
+  status: string;
+  updatedAt?: string | null;
+};
+
 export type Overview = {
   activeRuns: number;
   failedRuns: number;
@@ -178,6 +197,12 @@ export async function requestInternalApi(path: string, init: RequestInit = {}) {
   }
 
   return response.json();
+}
+
+export async function listRunners() {
+  const payload = (await requestInternalApi("/runners")) as { runners?: unknown[] } | null;
+
+  return normalizeRunners(payload?.runners);
 }
 
 async function readInternalApiError(response: Response) {
@@ -336,6 +361,59 @@ export function normalizeActivity(entries: unknown): ActivityItem[] {
   }));
 }
 
+export function normalizeRunners(entries: unknown): RunnerRecord[] {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries
+    .map((entry, index) => normalizeRunner(entry, index))
+    .filter((runner): runner is RunnerRecord => runner !== null);
+}
+
+export function normalizeRunner(entry: unknown, index = 0): RunnerRecord | null {
+  if (typeof entry !== "object" || entry === null) {
+    return null;
+  }
+
+  const displayName =
+    readString(entry, "displayName") ??
+    readString(entry, "display_name") ??
+    readString(entry, "name") ??
+    `Runner ${index + 1}`;
+
+  return {
+    allowedOperations:
+      readStringArray(entry, "allowedOperations") ??
+      readStringArray(entry, "allowed_operations") ??
+      [],
+    apiKeyCreatedAt:
+      readString(entry, "apiKeyCreatedAt") ?? readString(entry, "api_key_created_at") ?? null,
+    createdAt: readString(entry, "createdAt") ?? readString(entry, "created_at") ?? null,
+    currentConcurrency:
+      readNumber(entry, "currentConcurrency") ?? readNumber(entry, "current_concurrency") ?? null,
+    displayName,
+    hostLabel: readString(entry, "hostLabel") ?? readString(entry, "host_label") ?? null,
+    id: readString(entry, "id") ?? `runner-${index}`,
+    imageDigest: readString(entry, "imageDigest") ?? readString(entry, "image_digest") ?? null,
+    imageVersion: readString(entry, "imageVersion") ?? readString(entry, "image_version") ?? null,
+    lastHeartbeatAt:
+      readString(entry, "lastHeartbeatAt") ?? readString(entry, "last_heartbeat_at") ?? null,
+    maxConcurrency:
+      readNumber(entry, "maxConcurrency") ?? readNumber(entry, "max_concurrency") ?? 1,
+    projectIds: readStringArray(entry, "projectIds") ?? readStringArray(entry, "project_ids") ?? [],
+    repositorySelectors:
+      readRepositorySelectors(readObject(entry, "repositoryScopes")) ??
+      readRepositorySelectors(readObject(entry, "repository_scopes")) ??
+      readStringArray(entry, "repositorySelectors") ??
+      readStringArray(entry, "repository_selectors") ??
+      [],
+    revokedAt: readString(entry, "revokedAt") ?? readString(entry, "revoked_at") ?? null,
+    status: readString(entry, "status") ?? "registered",
+    updatedAt: readString(entry, "updatedAt") ?? readString(entry, "updated_at") ?? null,
+  };
+}
+
 export function normalizeOverview(entry: unknown): Overview {
   return {
     activeRuns: readNumber(entry, "activeRuns") ?? readNumber(entry, "active_runs") ?? 0,
@@ -362,6 +440,42 @@ export function statusTone(status: LoadStatus): "danger" | "neutral" | "success"
     default:
       return "neutral";
   }
+}
+
+export function runnerTone(
+  status: string,
+  revokedAt?: string | null,
+): "danger" | "neutral" | "success" | "warning" {
+  if (revokedAt) {
+    return "danger";
+  }
+
+  switch (status.toLowerCase()) {
+    case "online":
+    case "active":
+    case "ready":
+    case "running":
+      return "success";
+    case "registered":
+    case "pending":
+    case "offline":
+    case "stale":
+      return "warning";
+    case "revoked":
+    case "failed":
+    case "blocked":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
+export function formatRunnerStatus(status: string, revokedAt?: string | null) {
+  if (revokedAt) {
+    return "revoked";
+  }
+
+  return status.replace(/[_-]+/g, " ");
 }
 
 export function projectTone(status: string): "danger" | "neutral" | "success" | "warning" {
@@ -534,6 +648,15 @@ function readStringArray(value: unknown, key: string) {
   }
 
   return null;
+}
+
+function readRepositorySelectors(value: unknown) {
+  return (
+    readStringArray(value, "selectors") ??
+    readStringArray(value, "repositories") ??
+    readStringArray(value, "repositorySelectors") ??
+    readStringArray(value, "repository_selectors")
+  );
 }
 
 function normalizeRequestedBy(value: unknown): RunRequestedBy | null {

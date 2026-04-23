@@ -14,6 +14,7 @@ import { Route as SignUpCompleteRouteImport } from './routes/sign-up-complete'
 import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as RunsRouteImport } from './routes/runs'
+import { Route as RunnersRouteImport } from './routes/runners'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PullRequestsRouteImport } from './routes/pull-requests'
 import { Route as PostVerifyRouteImport } from './routes/post-verify'
@@ -51,6 +52,11 @@ const SignInRoute = SignInRouteImport.update({
 const RunsRoute = RunsRouteImport.update({
   id: '/runs',
   path: '/runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RunnersRoute = RunnersRouteImport.update({
+  id: '/runners',
+  path: '/runners',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -128,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/post-verify': typeof PostVerifyRoute
   '/pull-requests': typeof PullRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/runners': typeof RunnersRoute
   '/runs': typeof RunsRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
@@ -148,6 +155,7 @@ export interface FileRoutesByTo {
   '/post-verify': typeof PostVerifyRoute
   '/pull-requests': typeof PullRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/runners': typeof RunnersRoute
   '/runs': typeof RunsRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
@@ -169,6 +177,7 @@ export interface FileRoutesById {
   '/post-verify': typeof PostVerifyRoute
   '/pull-requests': typeof PullRequestsRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/runners': typeof RunnersRoute
   '/runs': typeof RunsRouteWithChildren
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
@@ -191,6 +200,7 @@ export interface FileRouteTypes {
     | '/post-verify'
     | '/pull-requests'
     | '/reset-password'
+    | '/runners'
     | '/runs'
     | '/sign-in'
     | '/sign-up'
@@ -211,6 +221,7 @@ export interface FileRouteTypes {
     | '/post-verify'
     | '/pull-requests'
     | '/reset-password'
+    | '/runners'
     | '/runs'
     | '/sign-in'
     | '/sign-up'
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/post-verify'
     | '/pull-requests'
     | '/reset-password'
+    | '/runners'
     | '/runs'
     | '/sign-in'
     | '/sign-up'
@@ -252,6 +264,7 @@ export interface RootRouteChildren {
   PostVerifyRoute: typeof PostVerifyRoute
   PullRequestsRoute: typeof PullRequestsRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  RunnersRoute: typeof RunnersRoute
   RunsRoute: typeof RunsRouteWithChildren
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
@@ -298,6 +311,13 @@ declare module '@tanstack/react-router' {
       path: '/runs'
       fullPath: '/runs'
       preLoaderRoute: typeof RunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/runners': {
+      id: '/runners'
+      path: '/runners'
+      fullPath: '/runners'
+      preLoaderRoute: typeof RunnersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -413,6 +433,7 @@ const rootRouteChildren: RootRouteChildren = {
   PostVerifyRoute: PostVerifyRoute,
   PullRequestsRoute: PullRequestsRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  RunnersRoute: RunnersRoute,
   RunsRoute: RunsRouteWithChildren,
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,

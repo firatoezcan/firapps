@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { hashPassword } from "better-auth/crypto";
 import type { Context } from "hono";
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -43,6 +43,11 @@ import {
   organizations,
   organizationTenants,
   organizationWorkspaces,
+  runnerJobArtifacts,
+  runnerJobEvents,
+  runnerJobs,
+  runnerRegistrations,
+  runnerSessions,
   runArtifacts,
   runEvents,
   runs,
@@ -53,8 +58,32 @@ import {
   type BlueprintStepDefinition,
   type DispatchMetadata,
   type JsonValue,
+  type RunnerOperation,
   type RunEventMetadata,
 } from "./db/schema.js";
+import {
+  buildRunnerSecretPreview,
+  claimRunnerJobSchema,
+  completeRunnerJobSchema,
+  createRunnerApiKey,
+  createRunnerJobSchema,
+  createRunnerRegistrationSchema,
+  createRunnerSessionSchema,
+  createRunnerSessionToken,
+  defaultRunnerLeaseSeconds,
+  hashRunnerSecret,
+  nextRunnerLeaseExpiry,
+  nextRunnerSessionExpiry,
+  runnerHeartbeatSchema,
+  runnerIdParamsSchema,
+  runnerJobEventSchema,
+  runnerJobIdParamsSchema,
+  runnerOperations,
+  runnerProtocolVersion,
+  toRunnerMetadata,
+  updateRunnerLeaseSchema,
+  uploadRunnerArtifactsSchema,
+} from "./runner-control-plane.js";
 import { ensureOperationsSeed } from "./seed.js";
 
 const slugSchema = z
@@ -247,8 +276,22 @@ type OrganizationWorkspaceRecord = typeof organizationWorkspaces.$inferSelect;
 type BlueprintRecord = typeof blueprints.$inferSelect;
 type DispatchRecord = typeof dispatches.$inferSelect;
 type ProjectRecord = typeof organizationTenants.$inferSelect;
+type RunnerJobRecord = typeof runnerJobs.$inferSelect;
+type RunnerRegistrationRecord = typeof runnerRegistrations.$inferSelect;
+type RunnerSessionRecord = typeof runnerSessions.$inferSelect;
 type RunRecord = typeof runs.$inferSelect;
 type RunStepRecord = typeof runSteps.$inferSelect;
+type RunnerSessionAuth =
+  | {
+      response?: never;
+      runner: RunnerRegistrationRecord;
+      session: RunnerSessionRecord;
+    }
+  | {
+      response: Response;
+      runner?: never;
+      session?: never;
+    };
 
 type RunRequestorRecord = Pick<typeof users.$inferSelect, "email" | "id" | "name">;
 type BuildRunResponseOptions = {
@@ -556,6 +599,192 @@ function buildGitHubErrorResponse(c: Context, error: unknown) {
     },
     { status },
   );
+}
+
+function toRunnerRegistrationResponse(record: RunnerRegistrationRecord) {
+  return {
+    allowedOperations: record.allowedOperations,
+    apiKeyExpiresAt: record.apiKeyExpiresAt,
+    apiKeyPreview: record.apiKeyPreview,
+    capabilityScopes: record.capabilityScopes,
+    createdAt: record.createdAt,
+    createdByUserId: record.createdByUserId,
+    displayName: record.displayName,
+    id: record.id,
+    imageDigest: record.imageDigest,
+    lastHeartbeatAt: record.lastHeartbeatAt,
+    maxConcurrency: record.maxConcurrency,
+    organizationId: record.organizationId,
+    protocolVersion: record.protocolVersion,
+    repositoryScopes: record.repositoryScopes,
+    revokedAt: record.revokedAt,
+    runnerVersion: record.runnerVersion,
+    status: record.status,
+    tenantId: record.tenantId,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function toRunnerJobResponse(record: RunnerJobRecord) {
+  return {
+    completedAt: record.completedAt,
+    createdAt: record.createdAt,
+    failureMessage: record.failureMessage,
+    id: record.id,
+    idempotencyKey: record.idempotencyKey,
+    leaseExpiresAt: record.leaseExpiresAt,
+    operation: record.operation,
+    organizationId: record.organizationId,
+    params: record.params,
+    result: record.result,
+    runId: record.runId,
+    runnerId: record.runnerId,
+    status: record.status,
+    tenantId: record.tenantId,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function readBearerToken(c: Context) {
+  const authorization = c.req.header("authorization") ?? "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+
+  return match?.[1]?.trim() || null;
+}
+
+async function requireRunnerSession(
+  c: Context,
+  expectedRunnerId?: string,
+): Promise<RunnerSessionAuth> {
+  const token = readBearerToken(c);
+
+  if (!token) {
+    return {
+      response: c.json({ error: "runner_session_required" }, 401),
+    };
+  }
+
+  const now = new Date();
+  const filters = [
+    eq(runnerSessions.tokenHash, hashRunnerSecret(token)),
+    isNull(runnerSessions.revokedAt),
+    gt(runnerSessions.expiresAt, now),
+    or(eq(runnerRegistrations.status, "active"), eq(runnerRegistrations.status, "online")),
+    isNull(runnerRegistrations.revokedAt),
+    or(isNull(runnerRegistrations.apiKeyExpiresAt), gt(runnerRegistrations.apiKeyExpiresAt, now)),
+  ];
+
+  if (expectedRunnerId) {
+    filters.push(eq(runnerRegistrations.id, expectedRunnerId));
+  }
+
+  const [record] = await runtime.db
+    .select({
+      runner: runnerRegistrations,
+      session: runnerSessions,
+    })
+    .from(runnerSessions)
+    .innerJoin(runnerRegistrations, eq(runnerSessions.runnerId, runnerRegistrations.id))
+    .where(and(...filters))
+    .limit(1);
+
+  if (!record) {
+    return {
+      response: c.json({ error: "runner_session_invalid" }, 401),
+    };
+  }
+
+  c.get("log").set({
+    runnerAuth: {
+      runnerId: record.runner.id,
+      sessionId: record.session.id,
+    },
+  });
+
+  return record;
+}
+
+async function getOrganizationRunnerRecord(organizationId: string, runnerId: string) {
+  const [record] = await runtime.db
+    .select()
+    .from(runnerRegistrations)
+    .where(
+      and(
+        eq(runnerRegistrations.organizationId, organizationId),
+        eq(runnerRegistrations.id, runnerId),
+      ),
+    )
+    .limit(1);
+
+  return record ?? null;
+}
+
+function runnerCanServeTenant(runner: RunnerRegistrationRecord, tenantId: string) {
+  return runner.tenantId == null || runner.tenantId === tenantId;
+}
+
+function runnerCanServeOperation(runner: RunnerRegistrationRecord, operation: RunnerOperation) {
+  return runner.allowedOperations.includes(operation);
+}
+
+async function assertRunnerJobScope(input: {
+  operation: RunnerOperation;
+  organizationId: string;
+  runnerId?: string | null;
+  tenantId: string;
+}) {
+  const project = await getOrganizationTenantRecord(input.organizationId, input.tenantId);
+
+  if (!project) {
+    return {
+      error: "project_not_found",
+      status: 404,
+    } as const;
+  }
+
+  if (!input.runnerId) {
+    return {
+      project,
+    } as const;
+  }
+
+  const runner = await getOrganizationRunnerRecord(input.organizationId, input.runnerId);
+
+  if (!runner || !["active", "online"].includes(runner.status) || runner.revokedAt != null) {
+    return {
+      error: "runner_not_found",
+      status: 404,
+    } as const;
+  }
+
+  if (!runnerCanServeTenant(runner, input.tenantId)) {
+    return {
+      error: "runner_tenant_scope_mismatch",
+      status: 422,
+    } as const;
+  }
+
+  if (!runnerCanServeOperation(runner, input.operation)) {
+    return {
+      error: "runner_operation_not_allowed",
+      status: 422,
+    } as const;
+  }
+
+  return {
+    project,
+    runner,
+  } as const;
+}
+
+async function getRunnerOwnedJob(input: { jobId: string; runnerId: string }) {
+  const [record] = await runtime.db
+    .select()
+    .from(runnerJobs)
+    .where(and(eq(runnerJobs.id, input.jobId), eq(runnerJobs.runnerId, input.runnerId)))
+    .limit(1);
+
+  return record ?? null;
 }
 
 async function getOrganizationTenantRecord(organizationId: string, tenantId: string) {
@@ -3869,6 +4098,635 @@ app.post(`${internalApiEnv.API_PREFIX}/organization-tenants`, createProjectHandl
 app.post(`${internalApiEnv.API_PREFIX}/projects`, createProjectHandler);
 app.patch(`${internalApiEnv.API_PREFIX}/projects/:projectId`, updateProjectHandler);
 app.delete(`${internalApiEnv.API_PREFIX}/projects/:projectId`, deleteProjectHandler);
+
+app.get(`${internalApiEnv.API_PREFIX}/runners`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const records = await runtime.db
+    .select()
+    .from(runnerRegistrations)
+    .where(eq(runnerRegistrations.organizationId, accessResult.access.organizationId))
+    .orderBy(desc(runnerRegistrations.createdAt));
+
+  return c.json({
+    runners: records.map(toRunnerRegistrationResponse),
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runners`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const body = createRunnerRegistrationSchema.parse(await c.req.json());
+
+  if (body.tenantId) {
+    const project = await getOrganizationTenantRecord(
+      accessResult.access.organizationId,
+      body.tenantId,
+    );
+
+    if (!project) {
+      return c.json({ error: "project_not_found" }, 404);
+    }
+  }
+
+  const apiKey = createRunnerApiKey();
+  const [runner] = await runtime.db
+    .insert(runnerRegistrations)
+    .values({
+      allowedOperations: body.allowedOperations ?? [...runnerOperations],
+      apiKeyExpiresAt: body.apiKeyExpiresAt ? new Date(body.apiKeyExpiresAt) : null,
+      apiKeyHash: hashRunnerSecret(apiKey),
+      apiKeyPreview: buildRunnerSecretPreview(apiKey),
+      capabilityScopes: toRunnerMetadata(body.capabilityScopes),
+      createdByUserId: accessResult.access.session.user.id,
+      displayName: body.displayName,
+      maxConcurrency: body.maxConcurrency,
+      organizationId: accessResult.access.organizationId,
+      repositoryScopes: toRunnerMetadata(body.repositoryScopes),
+      tenantId: body.tenantId ?? null,
+    })
+    .returning();
+
+  await recordActivityEvent({
+    actorUserId: accessResult.access.session.user.id,
+    description: `Runner ${runner.displayName} was registered.`,
+    kind: "runner_registered",
+    metadata: {
+      maxConcurrency: runner.maxConcurrency,
+      operationCount: runner.allowedOperations.length,
+      tenantId: runner.tenantId,
+    },
+    organizationId: accessResult.access.organizationId,
+    status: "completed",
+    tenantId: runner.tenantId,
+    title: runner.displayName,
+  });
+
+  return c.json(
+    {
+      apiKey,
+      runner: toRunnerRegistrationResponse(runner),
+    },
+    201,
+  );
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runners/session`, async (c) => {
+  const body = createRunnerSessionSchema.parse(await c.req.json());
+  const apiKey = readBearerToken(c);
+
+  if (!apiKey) {
+    return c.json({ error: "runner_api_key_required" }, 401);
+  }
+
+  const now = new Date();
+  const apiKeyHash = hashRunnerSecret(apiKey);
+  const [runner] = await runtime.db
+    .select()
+    .from(runnerRegistrations)
+    .where(
+      and(
+        eq(runnerRegistrations.apiKeyHash, apiKeyHash),
+        or(eq(runnerRegistrations.status, "active"), eq(runnerRegistrations.status, "online")),
+        isNull(runnerRegistrations.revokedAt),
+        or(
+          isNull(runnerRegistrations.apiKeyExpiresAt),
+          gt(runnerRegistrations.apiKeyExpiresAt, now),
+        ),
+      ),
+    )
+    .limit(1);
+
+  if (!runner) {
+    return c.json({ error: "runner_api_key_invalid" }, 401);
+  }
+
+  const sessionToken = createRunnerSessionToken();
+  const expiresAt = nextRunnerSessionExpiry(now);
+  const [session] = await runtime.db
+    .insert(runnerSessions)
+    .values({
+      expiresAt,
+      hostCapabilities: toRunnerMetadata(body.hostCapabilities),
+      imageDigest: body.imageDigest ?? null,
+      protocolVersion: body.protocolVersion,
+      runnerId: runner.id,
+      runnerVersion: body.runnerVersion ?? null,
+      tokenHash: hashRunnerSecret(sessionToken),
+    })
+    .returning();
+
+  const [updatedRunner] = await runtime.db
+    .update(runnerRegistrations)
+    .set({
+      imageDigest: body.imageDigest ?? runner.imageDigest,
+      lastHeartbeatAt: now,
+      protocolVersion: body.protocolVersion,
+      runnerVersion: body.runnerVersion ?? runner.runnerVersion,
+      status: "online",
+      updatedAt: now,
+    })
+    .where(eq(runnerRegistrations.id, runner.id))
+    .returning();
+
+  return c.json({
+    expiresAt,
+    runner: toRunnerRegistrationResponse(updatedRunner),
+    runnerId: updatedRunner.id,
+    session: {
+      expiresAt: session.expiresAt,
+      id: session.id,
+      protocolVersion: session.protocolVersion,
+    },
+    sessionToken,
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/revoke`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const params = runnerIdParamsSchema.parse({
+    runnerId: c.req.param("runnerId"),
+  });
+  const runner = await getOrganizationRunnerRecord(
+    accessResult.access.organizationId,
+    params.runnerId,
+  );
+
+  if (!runner) {
+    return c.json({ error: "runner_not_found" }, 404);
+  }
+
+  const now = new Date();
+  const [updatedRunner] = await runtime.db
+    .update(runnerRegistrations)
+    .set({
+      revokedAt: now,
+      status: "revoked",
+      updatedAt: now,
+    })
+    .where(eq(runnerRegistrations.id, runner.id))
+    .returning();
+
+  await runtime.db
+    .update(runnerSessions)
+    .set({
+      revokedAt: now,
+    })
+    .where(eq(runnerSessions.runnerId, runner.id));
+
+  await recordActivityEvent({
+    actorUserId: accessResult.access.session.user.id,
+    description: `Runner ${runner.displayName} was revoked.`,
+    kind: "runner_revoked",
+    organizationId: accessResult.access.organizationId,
+    status: "revoked",
+    tenantId: runner.tenantId,
+    title: runner.displayName,
+  });
+
+  return c.json({
+    runner: toRunnerRegistrationResponse(updatedRunner),
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/heartbeat`, async (c) => {
+  const params = runnerIdParamsSchema.parse({
+    runnerId: c.req.param("runnerId"),
+  });
+  const authResult = await requireRunnerSession(c, params.runnerId);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const body = runnerHeartbeatSchema.parse(await c.req.json());
+  const now = new Date();
+  await runtime.db
+    .update(runnerSessions)
+    .set({
+      cleanupState: body.cleanupState ?? authResult.session.cleanupState,
+      currentConcurrency: body.currentConcurrency,
+      hostCapabilities: toRunnerMetadata(body.hostCapabilities),
+      imageDigest: body.imageDigest ?? authResult.session.imageDigest,
+      lastSeenAt: now,
+      runnerVersion: body.runnerVersion ?? authResult.session.runnerVersion,
+    })
+    .where(eq(runnerSessions.id, authResult.session.id));
+
+  const [runner] = await runtime.db
+    .update(runnerRegistrations)
+    .set({
+      imageDigest: body.imageDigest ?? authResult.runner.imageDigest,
+      lastHeartbeatAt: now,
+      protocolVersion: body.protocolVersion,
+      runnerVersion: body.runnerVersion ?? authResult.runner.runnerVersion,
+      status: "online",
+      updatedAt: now,
+    })
+    .where(eq(runnerRegistrations.id, authResult.runner.id))
+    .returning();
+
+  return c.json({
+    runner: toRunnerRegistrationResponse(runner),
+    session: {
+      expiresAt: authResult.session.expiresAt,
+      id: authResult.session.id,
+    },
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  const body = createRunnerJobSchema.parse(await c.req.json());
+  const scope = await assertRunnerJobScope({
+    operation: body.operation,
+    organizationId: accessResult.access.organizationId,
+    runnerId: body.runnerId,
+    tenantId: body.tenantId,
+  });
+
+  if ("error" in scope) {
+    return c.json({ error: scope.error }, scope.status);
+  }
+
+  try {
+    const [job] = await runtime.db
+      .insert(runnerJobs)
+      .values({
+        idempotencyKey: body.idempotencyKey ?? randomUUID(),
+        operation: body.operation,
+        organizationId: accessResult.access.organizationId,
+        params: toRunnerMetadata(body.params),
+        requestedByUserId: accessResult.access.session.user.id,
+        runId: body.runId ?? null,
+        runnerId: body.runnerId ?? null,
+        tenantId: scope.project.id,
+      })
+      .returning();
+
+    await recordActivityEvent({
+      actorUserId: accessResult.access.session.user.id,
+      description: `Runner job ${job.operation} was queued for ${scope.project.name}.`,
+      kind: "runner_job_queued",
+      metadata: {
+        jobId: job.id,
+        operation: job.operation,
+        runnerId: job.runnerId,
+      },
+      organizationId: accessResult.access.organizationId,
+      runId: job.runId,
+      status: "queued",
+      tenantId: scope.project.id,
+      title: job.operation,
+    });
+
+    return c.json({ job: toRunnerJobResponse(job) }, 201);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return c.json({ error: "runner_job_idempotency_conflict" }, 409);
+    }
+
+    throw error;
+  }
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runners/:runnerId/jobs/claim`, async (c) => {
+  const params = runnerIdParamsSchema.parse({
+    runnerId: c.req.param("runnerId"),
+  });
+  const authResult = await requireRunnerSession(c, params.runnerId);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const body = claimRunnerJobSchema.parse(await c.req.json());
+  const supportedOperations = body.supportedOperations ?? [...runnerOperations];
+  const allowedOperations = authResult.runner.allowedOperations.filter((operation) =>
+    supportedOperations.includes(operation),
+  );
+  const remainingCapacity = Math.max(0, authResult.runner.maxConcurrency - body.currentConcurrency);
+  const claimCapacity = Math.min(body.capacity, remainingCapacity);
+
+  if (claimCapacity < 1 || allowedOperations.length === 0) {
+    return c.json({
+      job: null,
+      leaseSeconds: defaultRunnerLeaseSeconds,
+      protocolVersion: runnerProtocolVersion,
+    });
+  }
+
+  const filters = [
+    eq(runnerJobs.organizationId, authResult.runner.organizationId),
+    eq(runnerJobs.status, "queued"),
+    inArray(runnerJobs.operation, allowedOperations),
+    or(isNull(runnerJobs.runnerId), eq(runnerJobs.runnerId, authResult.runner.id)),
+  ];
+
+  if (authResult.runner.tenantId != null) {
+    filters.push(eq(runnerJobs.tenantId, authResult.runner.tenantId));
+  }
+
+  const [candidate] = await runtime.db
+    .select()
+    .from(runnerJobs)
+    .where(and(...filters))
+    .orderBy(runnerJobs.createdAt)
+    .limit(1);
+
+  if (!candidate) {
+    return c.json({
+      job: null,
+      leaseSeconds: defaultRunnerLeaseSeconds,
+      protocolVersion: runnerProtocolVersion,
+    });
+  }
+
+  const leaseExpiresAt = nextRunnerLeaseExpiry(defaultRunnerLeaseSeconds);
+  const [job] = await runtime.db
+    .update(runnerJobs)
+    .set({
+      leaseExpiresAt,
+      runnerId: authResult.runner.id,
+      sessionId: authResult.session.id,
+      status: "leased",
+      updatedAt: new Date(),
+    })
+    .where(and(eq(runnerJobs.id, candidate.id), eq(runnerJobs.status, "queued")))
+    .returning();
+
+  if (!job) {
+    return c.json({
+      job: null,
+      leaseSeconds: defaultRunnerLeaseSeconds,
+      protocolVersion: runnerProtocolVersion,
+    });
+  }
+
+  await runtime.db.insert(runnerJobEvents).values({
+    eventKind: "claimed",
+    jobId: job.id,
+    message: `Runner ${authResult.runner.displayName} claimed ${job.operation}.`,
+    metadata: {
+      leaseExpiresAt: leaseExpiresAt.toISOString(),
+      runnerSessionId: authResult.session.id,
+    },
+    runnerId: authResult.runner.id,
+  });
+
+  return c.json({
+    job: toRunnerJobResponse(job),
+    leaseExpiresAt,
+    protocolVersion: runnerProtocolVersion,
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/lease`, async (c) => {
+  const authResult = await requireRunnerSession(c);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+  const body = updateRunnerLeaseSchema.parse(await c.req.json());
+  const job = await getRunnerOwnedJob({
+    jobId: params.jobId,
+    runnerId: authResult.runner.id,
+  });
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  if (body.action === "cancel") {
+    const [cancelledJob] = await runtime.db
+      .update(runnerJobs)
+      .set({
+        completedAt: new Date(),
+        leaseExpiresAt: null,
+        sessionId: authResult.session.id,
+        status: "cancelled",
+        updatedAt: new Date(),
+      })
+      .where(eq(runnerJobs.id, job.id))
+      .returning();
+
+    await runtime.db.insert(runnerJobEvents).values({
+      eventKind: "cancelled",
+      jobId: job.id,
+      level: "warn",
+      message: "Runner cancelled the leased job.",
+      runnerId: authResult.runner.id,
+    });
+
+    return c.json({ job: toRunnerJobResponse(cancelledJob) });
+  }
+
+  if (!["leased", "running"].includes(job.status)) {
+    return c.json({ error: "runner_job_not_leased" }, 409);
+  }
+
+  const leaseExpiresAt = nextRunnerLeaseExpiry(body.leaseSeconds);
+  const [updatedJob] = await runtime.db
+    .update(runnerJobs)
+    .set({
+      leaseExpiresAt,
+      sessionId: authResult.session.id,
+      status: job.status === "leased" ? "running" : job.status,
+      updatedAt: new Date(),
+    })
+    .where(eq(runnerJobs.id, job.id))
+    .returning();
+
+  await runtime.db.insert(runnerJobEvents).values({
+    eventKind: "lease_extended",
+    jobId: job.id,
+    message: "Runner extended the job lease.",
+    metadata: {
+      leaseExpiresAt: leaseExpiresAt.toISOString(),
+    },
+    runnerId: authResult.runner.id,
+  });
+
+  return c.json({
+    job: toRunnerJobResponse(updatedJob),
+    leaseExpiresAt,
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/events`, async (c) => {
+  const authResult = await requireRunnerSession(c);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+  const body = runnerJobEventSchema.parse(await c.req.json());
+  const job = await getRunnerOwnedJob({
+    jobId: params.jobId,
+    runnerId: authResult.runner.id,
+  });
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  if (body.eventKind === "started" && job.status === "leased") {
+    await runtime.db
+      .update(runnerJobs)
+      .set({
+        sessionId: authResult.session.id,
+        status: "running",
+        updatedAt: new Date(),
+      })
+      .where(eq(runnerJobs.id, job.id));
+  }
+
+  const [event] = await runtime.db
+    .insert(runnerJobEvents)
+    .values({
+      eventKind: body.eventKind,
+      jobId: job.id,
+      level: body.level,
+      message: body.message,
+      metadata: toRunnerMetadata(body.metadata),
+      runnerId: authResult.runner.id,
+    })
+    .returning();
+
+  return c.json({ event }, 201);
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/complete`, async (c) => {
+  const authResult = await requireRunnerSession(c);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+  const body = completeRunnerJobSchema.parse(await c.req.json());
+  const job = await getRunnerOwnedJob({
+    jobId: params.jobId,
+    runnerId: authResult.runner.id,
+  });
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  if (["completed", "failed", "cancelled"].includes(job.status)) {
+    return c.json({ error: "runner_job_already_terminal" }, 409);
+  }
+
+  const [updatedJob] = await runtime.db
+    .update(runnerJobs)
+    .set({
+      completedAt: new Date(),
+      failureMessage: body.failureMessage ?? null,
+      leaseExpiresAt: null,
+      result: toRunnerMetadata(body.result),
+      sessionId: authResult.session.id,
+      status: body.status,
+      updatedAt: new Date(),
+    })
+    .where(eq(runnerJobs.id, job.id))
+    .returning();
+
+  await runtime.db.insert(runnerJobEvents).values({
+    eventKind: body.status,
+    jobId: job.id,
+    level: body.status === "completed" ? "info" : "error",
+    message: body.failureMessage ?? `Runner job ${body.status}.`,
+    metadata: toRunnerMetadata(body.result),
+    runnerId: authResult.runner.id,
+  });
+
+  return c.json({
+    job: toRunnerJobResponse(updatedJob),
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/runner-jobs/:jobId/artifacts`, async (c) => {
+  const authResult = await requireRunnerSession(c);
+
+  if (authResult.response) {
+    return authResult.response;
+  }
+
+  const params = runnerJobIdParamsSchema.parse({
+    jobId: c.req.param("jobId"),
+  });
+  const body = uploadRunnerArtifactsSchema.parse(await c.req.json());
+  const job = await getRunnerOwnedJob({
+    jobId: params.jobId,
+    runnerId: authResult.runner.id,
+  });
+
+  if (!job) {
+    return c.json({ error: "runner_job_not_found" }, 404);
+  }
+
+  const artifacts = await runtime.db
+    .insert(runnerJobArtifacts)
+    .values(
+      body.artifacts.map((artifact) => ({
+        artifactType: artifact.artifactType,
+        jobId: job.id,
+        label: artifact.label,
+        metadata: toRunnerMetadata(artifact.metadata),
+        url: artifact.url ?? null,
+        value: artifact.value ?? null,
+      })),
+    )
+    .returning();
+
+  await runtime.db.insert(runnerJobEvents).values({
+    eventKind: "artifacts_uploaded",
+    jobId: job.id,
+    message: `Runner uploaded ${artifacts.length} artifact(s).`,
+    metadata: {
+      count: artifacts.length,
+    },
+    runnerId: authResult.runner.id,
+  });
+
+  return c.json({ artifacts }, 201);
+});
 
 app.get(`${internalApiEnv.API_PREFIX}/overview`, async (c) => {
   const accessResult = await requireOrganizationAccess(c);

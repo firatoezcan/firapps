@@ -5,6 +5,7 @@ import {
   GitPullRequest,
   LayoutDashboard,
   MailPlus,
+  MonitorCog,
   UserRound,
 } from "lucide-react";
 
@@ -15,7 +16,7 @@ type CustomerRoute = {
   description: string;
   icon: typeof LayoutDashboard;
   label: string;
-  to: "/" | "/account" | "/invitations" | "/organization" | "/pull-requests" | "/runs";
+  to: "/" | "/account" | "/invitations" | "/organization" | "/pull-requests" | "/runners" | "/runs";
 };
 
 type CustomerRouteGroup = {
@@ -46,6 +47,12 @@ export const customerRouteGroups = [
         icon: GitPullRequest,
         label: "Pull requests",
         to: "/pull-requests",
+      },
+      {
+        description: "Self-hosted Docker runner status, install guidance, and risk notes.",
+        icon: MonitorCog,
+        label: "Runners",
+        to: "/runners",
       },
     ],
   },

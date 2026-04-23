@@ -8,6 +8,7 @@ import {
   GitPullRequest,
   LayoutTemplate,
   ListOrdered,
+  MonitorCog,
   ServerCog,
   ShieldUser,
   Users,
@@ -31,6 +32,7 @@ type ControlPlaneRoute = {
     | "/projects"
     | "/pull-requests"
     | "/queue"
+    | "/runners"
     | "/runs";
 };
 
@@ -93,6 +95,12 @@ export const controlPlaneRouteGroups = [
         icon: Boxes,
         label: "Devboxes",
         to: "/devboxes",
+      },
+      {
+        description: "User-installed Docker runner enrollment, key handoff, and status.",
+        icon: MonitorCog,
+        label: "Runners",
+        to: "/runners",
       },
       {
         description: "Operators, deployment health, and workspace capacity.",

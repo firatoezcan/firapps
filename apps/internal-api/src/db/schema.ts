@@ -30,6 +30,16 @@ export type RunArtifactMetadata = Record<string, boolean | number | string | nul
 export type RunEventMetadata = Record<string, boolean | number | string | null>;
 export type ActivityEventMetadata = Record<string, boolean | number | string | null>;
 export type DispatchMetadata = Record<string, JsonValue>;
+export type RunnerMetadata = Record<string, JsonValue>;
+export type RunnerOperation =
+  | "repo.prepare"
+  | "git.clone"
+  | "git.push"
+  | "github.create_pr"
+  | "agent.forward_message"
+  | "container.start"
+  | "container.stop"
+  | "artifact.upload";
 
 export const tenants = operationsSchema.table("tenants", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -483,6 +493,179 @@ export const activityEvents = operationsSchema.table(
     workspaceRecordIdIndex: index("activity_events_workspace_record_id_idx").on(
       table.workspaceRecordId,
     ),
+  }),
+);
+
+export const runnerRegistrations = operationsSchema.table(
+  "runner_registrations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenant_id").references(() => organizationTenants.id, {
+      onDelete: "set null",
+    }),
+    displayName: text("display_name").notNull(),
+    status: text("status").notNull().default("active"),
+    apiKeyHash: text("api_key_hash").notNull(),
+    apiKeyPreview: text("api_key_preview").notNull(),
+    allowedOperations: jsonb("allowed_operations")
+      .$type<RunnerOperation[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    repositoryScopes: jsonb("repository_scopes")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    capabilityScopes: jsonb("capability_scopes")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    maxConcurrency: integer("max_concurrency").notNull().default(1),
+    protocolVersion: text("protocol_version"),
+    runnerVersion: text("runner_version"),
+    imageDigest: text("image_digest"),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    apiKeyExpiresAt: timestamp("api_key_expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    apiKeyHashUnique: uniqueIndex("runner_registrations_api_key_hash_unique").on(table.apiKeyHash),
+    organizationIdIndex: index("runner_registrations_organization_id_idx").on(table.organizationId),
+    statusIndex: index("runner_registrations_status_idx").on(table.status),
+    tenantIdIndex: index("runner_registrations_tenant_id_idx").on(table.tenantId),
+  }),
+);
+
+export const runnerSessions = operationsSchema.table(
+  "runner_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    runnerId: uuid("runner_id")
+      .notNull()
+      .references(() => runnerRegistrations.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    protocolVersion: text("protocol_version").notNull(),
+    runnerVersion: text("runner_version"),
+    imageDigest: text("image_digest"),
+    hostCapabilities: jsonb("host_capabilities")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    currentConcurrency: integer("current_concurrency").notNull().default(0),
+    cleanupState: text("cleanup_state"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    runnerIdIndex: index("runner_sessions_runner_id_idx").on(table.runnerId),
+    tokenHashUnique: uniqueIndex("runner_sessions_token_hash_unique").on(table.tokenHash),
+  }),
+);
+
+export const runnerJobs = operationsSchema.table(
+  "runner_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => organizationTenants.id, { onDelete: "cascade" }),
+    runnerId: uuid("runner_id").references(() => runnerRegistrations.id, {
+      onDelete: "set null",
+    }),
+    sessionId: uuid("session_id").references(() => runnerSessions.id, {
+      onDelete: "set null",
+    }),
+    runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+    requestedByUserId: uuid("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    operation: text("operation").$type<RunnerOperation>().notNull(),
+    status: text("status").notNull().default("queued"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    params: jsonb("params")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    result: jsonb("result")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    failureMessage: text("failure_message"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    idempotencyUnique: uniqueIndex("runner_jobs_idempotency_unique").on(
+      table.organizationId,
+      table.idempotencyKey,
+    ),
+    organizationIdIndex: index("runner_jobs_organization_id_idx").on(table.organizationId),
+    runnerIdIndex: index("runner_jobs_runner_id_idx").on(table.runnerId),
+    runIdIndex: index("runner_jobs_run_id_idx").on(table.runId),
+    statusIndex: index("runner_jobs_status_idx").on(table.status),
+    tenantIdIndex: index("runner_jobs_tenant_id_idx").on(table.tenantId),
+  }),
+);
+
+export const runnerJobEvents = operationsSchema.table(
+  "runner_job_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => runnerJobs.id, { onDelete: "cascade" }),
+    runnerId: uuid("runner_id").references(() => runnerRegistrations.id, {
+      onDelete: "set null",
+    }),
+    eventKind: text("event_kind").notNull(),
+    level: text("level").notNull().default("info"),
+    message: text("message").notNull(),
+    metadata: jsonb("metadata")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    jobIdIndex: index("runner_job_events_job_id_idx").on(table.jobId),
+    runnerIdIndex: index("runner_job_events_runner_id_idx").on(table.runnerId),
+  }),
+);
+
+export const runnerJobArtifacts = operationsSchema.table(
+  "runner_job_artifacts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => runnerJobs.id, { onDelete: "cascade" }),
+    artifactType: text("artifact_type").notNull(),
+    label: text("label").notNull(),
+    value: text("value"),
+    url: text("url"),
+    metadata: jsonb("metadata")
+      .$type<RunnerMetadata>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    artifactTypeIndex: index("runner_job_artifacts_artifact_type_idx").on(table.artifactType),
+    jobIdIndex: index("runner_job_artifacts_job_id_idx").on(table.jobId),
   }),
 );
 

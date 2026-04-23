@@ -105,6 +105,45 @@ Failure interpretation:
 - if runtime-capacity cards stop loading unless Electric is healthy, the queue
   metrics split regressed
 
+### Focused user-installed runner control-plane verification
+
+**Verification class:** self-contained
+
+Commands:
+
+```bash
+vp run internal-api#test
+vp run internal-api#build
+vp run admin-web#build
+vp run customer-web#build
+```
+
+Expected signal:
+
+- `internal-api` unit tests prove runner API keys are hashed/previewed, session
+  exchange uses a bearer API key outside the JSON body, unsupported protocol
+  versions are rejected, unknown operations are rejected, and structured job
+  params reject shell/argv/Docker CLI/host-mount fields
+- `internal-api` builds with the runner registration, session, heartbeat,
+  polling lease, event, result, artifact, and revocation endpoints
+- both frontend builds exit `0` with the `/runners` routes and quick-nav
+  entries
+- admin-web compiles the typed `/api/internal/runners` client for list,
+  registration, and revocation
+- customer-web compiles the read-only runner status/install guide against the
+  same runner list shape
+
+Failure interpretation:
+
+- if `internal-api` tests fail, the runner API-key/protocol/structured-operation
+  boundary regressed
+- if `internal-api` build fails, the runner schema or Hono endpoint contract
+  regressed
+- if either build fails, the runner UI surface or route generation regressed
+- if the product repo claims a daemon image, Docker socket behavior, or
+  firops worker execution, the ownership boundary regressed; this repo owns
+  only the product control plane and UI surfaces for the runner lane
+
 ## 2. Local hook setup through Vite+
 
 **Verification class:** self-contained
@@ -160,6 +199,8 @@ curl -i http://localhost:4001/api/internal/blueprints
 curl -i http://localhost:4001/api/internal/dispatches
 curl -i http://localhost:4001/api/internal/overview
 curl -i http://localhost:4001/api/internal/runs
+curl -i http://localhost:4001/api/internal/runners
+curl -i http://localhost:4001/api/internal/runner-jobs
 curl -i http://localhost:4001/api/internal/activity
 docker exec firapps-pg psql -U postgres -d firapps -c "select table_schema, table_name from information_schema.tables where table_schema in ('catalog','operations') order by table_schema, table_name;"
 docker exec firapps-pg psql -U postgres -d firapps -c "select slug, scope from operations.blueprints order by slug;"
@@ -181,6 +222,8 @@ Expected signal:
   - `/api/internal/dispatches`
   - `/api/internal/overview`
   - `/api/internal/runs`
+  - `/api/internal/runners`
+  - `/api/internal/runner-jobs`
   - `/api/internal/activity`
 - active run records with a provisioned workspace continue advancing from
   `provisioning` to `workspace_ready`, `completed`, or `failed` without a UI
@@ -190,7 +233,9 @@ Expected signal:
   `sessions`, `accounts`, `verifications`, `organizations`,
   `organization_memberships`, `organization_invitations`,
   `organization_tenants`, `organization_workspaces`, `blueprints`,
-  `dispatches`, `runs`, `run_steps`, and `run_artifacts`
+  `dispatches`, `runs`, `run_steps`, `run_artifacts`,
+  `runner_registrations`, `runner_sessions`, `runner_jobs`,
+  `runner_job_events`, and `runner_job_artifacts`
 - project creation with repository settings now validates the GitHub
   repository and requested default branch against the configured GitHub token,
   so a missing or invalid `GITHUB_TOKEN` will surface at project-registration

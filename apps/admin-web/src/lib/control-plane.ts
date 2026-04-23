@@ -246,6 +246,40 @@ export type PullRequestRecord = {
   updatedAt?: string | null;
 };
 
+export type RunnerRecord = {
+  allowedOperations: string[];
+  apiKeyCreatedAt?: string | null;
+  createdAt?: string | null;
+  currentConcurrency?: number | null;
+  displayName: string;
+  hostLabel?: string | null;
+  id: string;
+  imageDigest?: string | null;
+  imageVersion?: string | null;
+  lastHeartbeatAt?: string | null;
+  maxConcurrency: number;
+  projectIds: string[];
+  repositorySelectors: string[];
+  revokedAt?: string | null;
+  status: string;
+  updatedAt?: string | null;
+};
+
+export type RunnerRegistrationInput = {
+  allowedOperations: string[];
+  displayName: string;
+  maxConcurrency: number;
+  repositoryScopes: Record<string, unknown>;
+};
+
+export type RunnerRegistrationResult = {
+  apiKey: string | null;
+  controlPlaneUrl: string | null;
+  imageRef: string | null;
+  installCommand: string | null;
+  runner: RunnerRecord | null;
+};
+
 export type Overview = {
   activeRuns: number;
   failedRuns: number;
@@ -294,6 +328,64 @@ export async function requestInternalApi(path: string, init: RequestInit = {}) {
   }
 
   return response.json();
+}
+
+export async function listRunners() {
+  const payload = (await requestInternalApi("/runners")) as { runners?: unknown[] } | null;
+
+  return normalizeRunners(payload?.runners);
+}
+
+export async function createRunnerRegistration(input: RunnerRegistrationInput) {
+  const payload = (await requestInternalApi("/runners", {
+    body: JSON.stringify(input),
+    method: "POST",
+  })) as {
+    apiKey?: unknown;
+    controlPlaneUrl?: unknown;
+    control_plane_url?: unknown;
+    imageRef?: unknown;
+    image_ref?: unknown;
+    installCommand?: unknown;
+    install_command?: unknown;
+    runner?: unknown;
+  } | null;
+
+  const apiKey = typeof payload?.apiKey === "string" ? payload.apiKey : null;
+  const controlPlaneUrl =
+    typeof payload?.controlPlaneUrl === "string"
+      ? payload.controlPlaneUrl
+      : typeof payload?.control_plane_url === "string"
+        ? payload.control_plane_url
+        : null;
+  const imageRef =
+    typeof payload?.imageRef === "string"
+      ? payload.imageRef
+      : typeof payload?.image_ref === "string"
+        ? payload.image_ref
+        : null;
+  const installCommand =
+    typeof payload?.installCommand === "string"
+      ? payload.installCommand
+      : typeof payload?.install_command === "string"
+        ? payload.install_command
+        : null;
+
+  return {
+    apiKey,
+    controlPlaneUrl,
+    imageRef,
+    installCommand,
+    runner: normalizeRunner(payload?.runner, 0),
+  } satisfies RunnerRegistrationResult;
+}
+
+export async function revokeRunner(runnerId: string) {
+  const payload = (await requestInternalApi(`/runners/${encodeURIComponent(runnerId)}/revoke`, {
+    method: "POST",
+  })) as { runner?: unknown } | null;
+
+  return normalizeRunner(payload?.runner, 0);
 }
 
 async function readInternalApiError(response: Response) {
@@ -637,6 +729,59 @@ export function normalizePullRequests(entries: unknown): PullRequestRecord[] {
   }));
 }
 
+export function normalizeRunners(entries: unknown): RunnerRecord[] {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries
+    .map((entry, index) => normalizeRunner(entry, index))
+    .filter((runner): runner is RunnerRecord => runner !== null);
+}
+
+export function normalizeRunner(entry: unknown, index = 0): RunnerRecord | null {
+  if (typeof entry !== "object" || entry === null) {
+    return null;
+  }
+
+  const displayName =
+    readString(entry, "displayName") ??
+    readString(entry, "display_name") ??
+    readString(entry, "name") ??
+    `Runner ${index + 1}`;
+
+  return {
+    allowedOperations:
+      readStringArray(entry, "allowedOperations") ??
+      readStringArray(entry, "allowed_operations") ??
+      [],
+    apiKeyCreatedAt:
+      readString(entry, "apiKeyCreatedAt") ?? readString(entry, "api_key_created_at") ?? null,
+    createdAt: readString(entry, "createdAt") ?? readString(entry, "created_at") ?? null,
+    currentConcurrency:
+      readNumber(entry, "currentConcurrency") ?? readNumber(entry, "current_concurrency") ?? null,
+    displayName,
+    hostLabel: readString(entry, "hostLabel") ?? readString(entry, "host_label") ?? null,
+    id: readString(entry, "id") ?? `runner-${index}`,
+    imageDigest: readString(entry, "imageDigest") ?? readString(entry, "image_digest") ?? null,
+    imageVersion: readString(entry, "imageVersion") ?? readString(entry, "image_version") ?? null,
+    lastHeartbeatAt:
+      readString(entry, "lastHeartbeatAt") ?? readString(entry, "last_heartbeat_at") ?? null,
+    maxConcurrency:
+      readNumber(entry, "maxConcurrency") ?? readNumber(entry, "max_concurrency") ?? 1,
+    projectIds: readStringArray(entry, "projectIds") ?? readStringArray(entry, "project_ids") ?? [],
+    repositorySelectors:
+      readRepositorySelectors(readObject(entry, "repositoryScopes")) ??
+      readRepositorySelectors(readObject(entry, "repository_scopes")) ??
+      readStringArray(entry, "repositorySelectors") ??
+      readStringArray(entry, "repository_selectors") ??
+      [],
+    revokedAt: readString(entry, "revokedAt") ?? readString(entry, "revoked_at") ?? null,
+    status: readString(entry, "status") ?? "registered",
+    updatedAt: readString(entry, "updatedAt") ?? readString(entry, "updated_at") ?? null,
+  };
+}
+
 export function statusTone(status: LoadStatus) {
   switch (status) {
     case "ready":
@@ -649,6 +794,39 @@ export function statusTone(status: LoadStatus) {
     default:
       return "neutral";
   }
+}
+
+export function runnerTone(status: string, revokedAt?: string | null) {
+  if (revokedAt) {
+    return "danger";
+  }
+
+  switch (status.toLowerCase()) {
+    case "online":
+    case "active":
+    case "ready":
+    case "running":
+      return "success";
+    case "registered":
+    case "pending":
+    case "offline":
+    case "stale":
+      return "warning";
+    case "revoked":
+    case "failed":
+    case "blocked":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
+export function formatRunnerStatus(status: string, revokedAt?: string | null) {
+  if (revokedAt) {
+    return "revoked";
+  }
+
+  return status.replace(/[_-]+/g, " ");
 }
 
 export function tenantTone(status: string) {
@@ -1034,6 +1212,15 @@ function readStringArray(value: unknown, key: string) {
   }
 
   return null;
+}
+
+function readRepositorySelectors(value: unknown) {
+  return (
+    readStringArray(value, "selectors") ??
+    readStringArray(value, "repositories") ??
+    readStringArray(value, "repositorySelectors") ??
+    readStringArray(value, "repository_selectors")
+  );
 }
 
 function normalizeWorkspace(entry: unknown, index: number): Workspace {

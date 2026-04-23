@@ -43,6 +43,13 @@
       "when": 1776860792410,
       "tag": "0005_typical_centennial",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776975726566,
+      "tag": "0006_magical_ultimo",
+      "breakpoints": true
     }
   ]
 }
