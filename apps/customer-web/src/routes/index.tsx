@@ -10,7 +10,6 @@ import {
   Megaphone,
   RefreshCw,
   Rocket,
-  ServerCog,
   ShieldCheck,
   Users,
   Workflow,
@@ -31,7 +30,7 @@ import { Button } from "@firapps/ui/components/button";
 
 import { authClient } from "../lib/auth-client";
 import { buildAdminRouteHref, resolveAdminOrigin } from "../lib/admin-origin";
-import { CustomerRouteNavigation } from "../lib/customer-route-navigation";
+import { CustomerRouteNavigation, customerRouteGroups } from "../lib/customer-route-navigation";
 import { buildCustomerPath, toErrorMessage, toRoleLabel } from "../lib/customer-auth";
 import {
   type ActivityItem,
@@ -726,14 +725,13 @@ function CustomerLanding() {
     });
   }
 
-  const featuredCount = state.products.filter((product) => product.featured).length;
   const pendingInvitationCount = invitations.filter(
     (invitation) => invitation.status === "pending",
   ).length;
   const recentProjects = projects.slice(0, 4);
   const recentRuns = runs.slice(0, 4);
   const recentPullRequests = runs.filter((run) => Boolean(getRunPullRequestUrl(run))).slice(0, 3);
-  const recentActivity = activity.slice(0, 5);
+  const recentActivity = activity.slice(0, 4);
   const visibleWorkspaces = workspaces.slice(0, 5);
   const readyWorkspaceCount = workspaces.filter((workspace) => workspaceIsReady(workspace)).length;
   const hasWorkspaceSurface = Boolean(currentSession && resolvedActiveOrganization?.id);
@@ -748,8 +746,6 @@ function CustomerLanding() {
     latestRun,
     recentPullRequestCount: recentPullRequests.length,
   });
-  const serviceUpdateCount = state.announcements.length + featuredCount;
-
   return (
     <AppPage
       eyebrow="Customer web"
@@ -850,7 +846,7 @@ function CustomerLanding() {
         </Card>
       ) : null}
 
-      <SectionGrid className="xl:grid-cols-4">
+      <SectionGrid className="xl:grid-cols-3">
         <StatCard
           label="Active organization"
           value={resolvedActiveOrganization?.name ?? "none"}
@@ -870,6 +866,16 @@ function CustomerLanding() {
               : "Sign in and activate an organization to load your work."
           }
           tone={opsStatus === "error" ? "danger" : hasWorkspaceSurface ? "success" : "neutral"}
+        />
+        <StatCard
+          label="Needs attention"
+          value={hasWorkspaceSurface ? String(attentionRunCount) : "locked"}
+          detail={
+            hasWorkspaceSurface
+              ? "Failed or cancelled runs in your current member-scoped slice."
+              : "Signed-in members only."
+          }
+          tone={attentionRunCount > 0 ? "danger" : "neutral"}
         />
         <StatCard
           label="Pull requests"
@@ -892,28 +898,6 @@ function CustomerLanding() {
           tone={activeMemberRunCount > 0 ? "warning" : opsStatus === "error" ? "danger" : "neutral"}
         />
         <StatCard
-          label="Needs attention"
-          value={hasWorkspaceSurface ? String(attentionRunCount) : "locked"}
-          detail={
-            hasWorkspaceSurface
-              ? "Failed or cancelled runs in your current member-scoped slice."
-              : "Signed-in members only."
-          }
-          tone={attentionRunCount > 0 ? "danger" : "neutral"}
-        />
-        <StatCard
-          label="Latest run"
-          value={latestRun?.status ?? (hasWorkspaceSurface ? "none" : "locked")}
-          detail={
-            hasWorkspaceSurface
-              ? latestRun
-                ? `${latestRun.title} · ${formatDate(latestRun.updatedAt ?? latestRun.createdAt)}`
-                : "No member-scoped run visible yet."
-              : "Unlocks after sign-in and organization activation."
-          }
-          tone={latestRun ? runTone(latestRun.status) : "neutral"}
-        />
-        <StatCard
           label="Devboxes ready"
           value={hasWorkspaceSurface ? String(readyWorkspaceCount) : "locked"}
           detail={
@@ -926,136 +910,15 @@ function CustomerLanding() {
           }
         />
         <StatCard
-          label="Projects"
-          value={hasWorkspaceSurface ? String(overview.projectCount) : "locked"}
-          detail={
-            hasWorkspaceSurface
-              ? "Projects returned by the internal control-plane read surface."
-              : "Choose an active organization to unlock project access."
-          }
-          tone={projectStatus === "error" ? "danger" : hasWorkspaceSurface ? "success" : "neutral"}
-        />
-        <StatCard
           label="Pending invitations"
           value={String(pendingInvitationCount)}
           detail="Invitation records addressable through customer-web."
           tone={invitations.length > 0 ? "warning" : "neutral"}
         />
-        <StatCard
-          label="Service updates"
-          value={String(serviceUpdateCount)}
-          detail="Announcements plus featured catalog items, kept secondary to your work."
-          tone={status === "error" ? "danger" : serviceUpdateCount > 0 ? "success" : "neutral"}
-        />
       </SectionGrid>
 
-      <SectionGrid>
-        <Card>
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <CardTitle className="flex items-center gap-2">
-                  <ShieldCheck className="size-5" />
-                  Account and organization access
-                </CardTitle>
-                <CardDescription>
-                  Sign-in, invite, and organization controls stay here, but the dashboard keeps them
-                  secondary to the member work surface above.
-                </CardDescription>
-              </div>
-              <StatusPill tone={currentSession ? "success" : "neutral"}>
-                {currentSession ? "authenticated" : "guest"}
-              </StatusPill>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {currentSession ? (
-              <>
-                <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
-                  <p className="font-medium">{currentSession.user.name}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{currentSession.user.email}</p>
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    Email verified: {currentSession.user.emailVerified ? "yes" : "no"}
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-foreground">Organizations</p>
-                    <StatusPill tone={organizations.length > 0 ? "success" : "warning"}>
-                      {organizations.length}
-                    </StatusPill>
-                  </div>
-                  {organizations.length > 0 ? (
-                    <div className="space-y-3">
-                      {organizations.map((organization) => {
-                        const isActive = activeOrganization?.id === organization.id;
-                        const isResolvedActive =
-                          resolvedActiveOrganization?.id === organization.id || isActive;
-
-                        return (
-                          <div
-                            className="rounded-xl border border-border/60 bg-muted/20 p-4"
-                            key={organization.id}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="font-medium">{organization.name}</p>
-                                <p className="text-sm text-muted-foreground">{organization.slug}</p>
-                              </div>
-                              <Button
-                                disabled={isResolvedActive || busyAction === "set-active"}
-                                onClick={() => void handleSetActiveOrganization(organization.id)}
-                                type="button"
-                                variant={isResolvedActive ? "secondary" : "outline"}
-                              >
-                                {isResolvedActive ? "Active" : "Set active"}
-                              </Button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No organization memberships yet. Create the first organization from sign-up or
-                      accept an invitation from the list below.
-                    </p>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Customer-web still owns owner sign-up, invite acceptance, verification follow-up,
-                  and password reset, but those are now access steps into the member dashboard
-                  rather than the main event on this page.
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <Button asChild>
-                    <Link to="/sign-up">
-                      Create owner account
-                      <ArrowRight className="size-4" />
-                    </Link>
-                  </Button>
-                  <Button asChild type="button" variant="outline">
-                    <Link
-                      search={{
-                        email: "",
-                        redirect: signInRedirectPath,
-                      }}
-                      to="/sign-in"
-                    >
-                      Sign in
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
+      <SectionGrid className="xl:grid-cols-3">
+        <Card className="xl:col-span-2">
           <CardHeader>
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
@@ -1269,7 +1132,8 @@ function CustomerLanding() {
                   My work hub
                 </CardTitle>
                 <CardDescription>
-                  A member-scoped snapshot of the work you can resume fastest from customer-web.
+                  The dashboard summary stays narrow: what you own, what is blocked, and where to go
+                  next.
                 </CardDescription>
               </div>
               <StatusPill
@@ -1344,10 +1208,16 @@ function CustomerLanding() {
                     value={latestRun?.status ?? "none"}
                   />
                   <MetricTile
-                    detail="Workspace records with ready access or active status."
-                    label="Ready devboxes"
-                    tone={readyWorkspaceCount > 0 ? "success" : "neutral"}
-                    value={String(readyWorkspaceCount)}
+                    detail={`Projects: ${overview.projectCount} · Ready devboxes: ${readyWorkspaceCount}`}
+                    label="Workspace access"
+                    tone={
+                      workspaceStatus === "error"
+                        ? "danger"
+                        : readyWorkspaceCount > 0
+                          ? "success"
+                          : "neutral"
+                    }
+                    value={workspaceStatus}
                   />
                 </div>
 
@@ -1387,68 +1257,64 @@ function CustomerLanding() {
             )}
           </CardContent>
         </Card>
+      </SectionGrid>
 
-        <Card>
+      <SectionGrid className="xl:grid-cols-3">
+        <Card className="xl:col-span-2">
           <CardHeader>
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <CardTitle className="flex items-center gap-2">
-                  <FolderKanban className="size-5" />
-                  Project access
+                  <Workflow className="size-5" />
+                  Workspace pages
                 </CardTitle>
                 <CardDescription>
-                  Read-only project inventory and repository context for your active organization.
+                  The dashboard decides what to do next. The routes below do the actual work.
                 </CardDescription>
               </div>
-              <StatusPill tone={statusTone(projectStatus)}>{projectStatus}</StatusPill>
+              <StatusPill tone={hasWorkspaceSurface ? "success" : "neutral"}>
+                {hasWorkspaceSurface ? "route handoff ready" : "sign in to unlock"}
+              </StatusPill>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {!currentSession ? (
-              <p className="text-sm text-muted-foreground">
-                Sign in to see the projects attached to your organization membership.
-              </p>
-            ) : !resolvedActiveOrganization ? (
-              <p className="text-sm text-muted-foreground">
-                Choose an active organization before loading project access.
-              </p>
-            ) : projectError ? (
-              <p className="text-sm text-destructive">{projectError}</p>
-            ) : recentProjects.length > 0 ? (
-              recentProjects.map((project) => (
-                <div
-                  className="rounded-xl border border-border/60 bg-muted/20 p-4"
-                  key={project.id}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{project.name}</p>
-                      <p className="text-sm text-muted-foreground">{project.slug}</p>
-                    </div>
-                    <StatusPill tone={projectTone(project.status)}>{project.status}</StatusPill>
-                  </div>
-                  <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                    {project.description ? <p>{project.description}</p> : null}
-                    <p>
-                      Repo:{" "}
-                      {formatRepository(project.repoProvider, project.repoOwner, project.repoName)}
-                    </p>
-                    <p>
-                      Branch: {project.defaultBranch ?? "not set"} · Plan:{" "}
-                      {project.billingPlan ?? "not set"}
-                    </p>
-                    <p>
-                      Last run: {formatDate(project.lastRunAt)} · Workspaces:{" "}
-                      {String(project.workspaceCount ?? 0)}
-                    </p>
-                  </div>
+          <CardContent className="grid gap-4 lg:grid-cols-3">
+            {customerRouteGroups.map((group) => (
+              <div
+                className="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4"
+                key={group.label}
+              >
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    {group.label}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{group.description}</p>
                 </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No projects are visible for this organization yet.
-              </p>
-            )}
+                <div className="space-y-2">
+                  {group.routes.map((route, index) => (
+                    <div
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background p-3"
+                      key={route.to}
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium">{route.label}</p>
+                        <p className="text-sm text-muted-foreground">{route.description}</p>
+                      </div>
+                      <Button
+                        asChild
+                        size="sm"
+                        type="button"
+                        variant={index === 0 ? "default" : "outline"}
+                      >
+                        <Link to={route.to}>
+                          <route.icon className="size-4" />
+                          Open
+                        </Link>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
 
@@ -1457,11 +1323,97 @@ function CustomerLanding() {
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <CardTitle className="flex items-center gap-2">
+                  <ShieldCheck className="size-5" />
+                  Account and access
+                </CardTitle>
+                <CardDescription>
+                  Sign-in, invite, and organization controls stay visible, but secondary to the work
+                  routes.
+                </CardDescription>
+              </div>
+              <StatusPill tone={currentSession ? "success" : "neutral"}>
+                {currentSession ? "authenticated" : "guest"}
+              </StatusPill>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!currentSession ? (
+              <p className="text-sm text-muted-foreground">
+                Customer-web still owns owner sign-up, invite acceptance, verification follow-up,
+                and password reset.
+              </p>
+            ) : (
+              <>
+                <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+                  <p className="font-medium">{currentSession.user.name}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{currentSession.user.email}</p>
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Email verified: {currentSession.user.emailVerified ? "yes" : "no"}
+                  </p>
+                </div>
+                {organizations.length > 0 ? (
+                  <div className="space-y-3">
+                    {organizations.map((organization) => {
+                      const isActive = activeOrganization?.id === organization.id;
+                      const isResolvedActive =
+                        resolvedActiveOrganization?.id === organization.id || isActive;
+
+                      return (
+                        <div
+                          className="rounded-xl border border-border/60 bg-muted/20 p-4"
+                          key={organization.id}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium">{organization.name}</p>
+                              <p className="text-sm text-muted-foreground">{organization.slug}</p>
+                            </div>
+                            <Button
+                              disabled={isResolvedActive || busyAction === "set-active"}
+                              onClick={() => void handleSetActiveOrganization(organization.id)}
+                              type="button"
+                              variant={isResolvedActive ? "secondary" : "outline"}
+                            >
+                              {isResolvedActive ? "Active" : "Set active"}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No organization memberships yet. Create the first organization from sign-up or
+                    accept an invitation.
+                  </p>
+                )}
+              </>
+            )}
+
+            <div className="flex flex-wrap gap-3">
+              <Button asChild type="button" variant="outline">
+                <Link to="/account">Open account</Link>
+              </Button>
+              <Button asChild type="button" variant="outline">
+                <Link to="/invitations">Open invitations</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </SectionGrid>
+
+      <SectionGrid className="xl:grid-cols-3">
+        <Card className="xl:col-span-2">
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle className="flex items-center gap-2">
                   <Rocket className="size-5" />
                   Recent runs
                 </CardTitle>
                 <CardDescription>
-                  Member-scoped run history with direct devbox, preview, and pull request jump-offs.
+                  Start here when you need execution context, then drill into the dedicated runs
+                  route for history or detail.
                 </CardDescription>
               </div>
               <StatusPill tone={opsStatus === "error" ? "danger" : "success"}>
@@ -1481,60 +1433,61 @@ function CustomerLanding() {
             ) : opsError ? (
               <p className="text-sm text-destructive">{opsError}</p>
             ) : recentRuns.length > 0 ? (
-              recentRuns.map((run) => (
-                <div className="rounded-xl border border-border/60 bg-muted/20 p-4" key={run.id}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{run.title}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {run.projectName ?? run.projectSlug ?? "Unassigned project"} ·{" "}
-                        {formatDate(run.createdAt)}
+              <>
+                {recentRuns.map((run) => (
+                  <div className="rounded-xl border border-border/60 bg-muted/20 p-4" key={run.id}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium">{run.title}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {run.projectName ?? run.projectSlug ?? "Unassigned project"} ·{" "}
+                          {formatDate(run.createdAt)}
+                        </p>
+                      </div>
+                      <StatusPill tone={runTone(run.status)}>{run.status}</StatusPill>
+                    </div>
+                    <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                      <p>
+                        {(run.resultSummary ?? run.failureMessage ?? run.objective) ||
+                          "No summary yet."}
+                      </p>
+                      <p>
+                        Steps: {run.stepCounts.completed}/{run.stepCounts.total} complete · In
+                        progress: {run.stepCounts.inProgress} · Failed: {run.stepCounts.failed}
                       </p>
                     </div>
-                    <StatusPill tone={runTone(run.status)}>{run.status}</StatusPill>
-                  </div>
-                  <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                    <p>
-                      {(run.resultSummary ?? run.failureMessage ?? run.objective) ||
-                        "No summary yet."}
-                    </p>
-                    <p>
-                      Steps: {run.stepCounts.completed}/{run.stepCounts.total} complete · In
-                      progress: {run.stepCounts.inProgress} · Failed: {run.stepCounts.failed}
-                    </p>
-                    <p>
-                      Requested by: {run.requestedBy?.name ?? "Unknown"} · Source: {run.source}
-                    </p>
-                  </div>
-                  {run.workspace?.ideUrl ||
-                  run.workspace?.previewUrl ||
-                  getRunPullRequestUrl(run) ? (
                     <div className="mt-4 flex flex-wrap gap-3">
+                      <Button asChild size="sm" type="button">
+                        <Link params={{ runId: run.id }} to="/runs/$runId">
+                          Open run detail
+                        </Link>
+                      </Button>
                       {getRunPullRequestUrl(run) ? (
-                        <Button asChild type="button" variant="outline">
+                        <Button asChild size="sm" type="button" variant="outline">
                           <a href={getRunPullRequestUrl(run)!} rel="noreferrer" target="_blank">
                             Open pull request
                           </a>
                         </Button>
                       ) : null}
                       {run.workspace?.ideUrl ? (
-                        <Button asChild type="button" variant="outline">
+                        <Button asChild size="sm" type="button" variant="outline">
                           <a href={run.workspace.ideUrl} rel="noreferrer" target="_blank">
                             Open devbox
                           </a>
                         </Button>
                       ) : null}
-                      {run.workspace?.previewUrl ? (
-                        <Button asChild type="button" variant="outline">
-                          <a href={run.workspace.previewUrl} rel="noreferrer" target="_blank">
-                            Open preview
-                          </a>
-                        </Button>
-                      ) : null}
                     </div>
-                  ) : null}
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-3">
+                  <Button asChild type="button">
+                    <Link to="/runs">
+                      <ClipboardList className="size-4" />
+                      Open all runs
+                    </Link>
+                  </Button>
                 </div>
-              ))
+              </>
             ) : (
               <p className="text-sm text-muted-foreground">
                 No runs are visible yet for this organization.
@@ -1548,11 +1501,113 @@ function CustomerLanding() {
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <CardTitle className="flex items-center gap-2">
+                  <FolderKanban className="size-5" />
+                  Organization context
+                </CardTitle>
+                <CardDescription>
+                  Use the organization route for roster and wider project context. This home card
+                  only keeps the immediate snapshot.
+                </CardDescription>
+              </div>
+              <StatusPill tone={projectStatus === "error" ? "danger" : "neutral"}>
+                {resolvedActiveOrganization?.slug ?? "inactive"}
+              </StatusPill>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!currentSession ? (
+              <p className="text-sm text-muted-foreground">
+                Sign in to inspect project and devbox context.
+              </p>
+            ) : !resolvedActiveOrganization ? (
+              <p className="text-sm text-muted-foreground">
+                Choose an active organization before loading project context.
+              </p>
+            ) : (
+              <>
+                {projectError ? <p className="text-sm text-destructive">{projectError}</p> : null}
+                <div className="grid gap-3">
+                  <MetricTile
+                    detail="Projects visible through the internal control-plane read surface."
+                    label="Projects"
+                    tone={
+                      projectStatus === "error"
+                        ? "danger"
+                        : hasWorkspaceSurface
+                          ? "success"
+                          : "neutral"
+                    }
+                    value={String(overview.projectCount || projects.length)}
+                  />
+                  <MetricTile
+                    detail="Workspace records with ready access or active status."
+                    label="Ready devboxes"
+                    tone={readyWorkspaceCount > 0 ? "success" : "neutral"}
+                    value={String(readyWorkspaceCount)}
+                  />
+                </div>
+                {recentProjects.length > 0 ? (
+                  <div className="space-y-3">
+                    {recentProjects.slice(0, 2).map((project) => (
+                      <div
+                        className="rounded-xl border border-border/60 bg-muted/20 p-4"
+                        key={project.id}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium">{project.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {formatRepository(
+                                project.repoProvider,
+                                project.repoOwner,
+                                project.repoName,
+                              )}
+                            </p>
+                          </div>
+                          <StatusPill tone={projectTone(project.status)}>
+                            {project.status}
+                          </StatusPill>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {visibleWorkspaces.length > 0 ? (
+                  <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+                    <p className="font-medium">Latest workspace</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {visibleWorkspaces[0]!.projectName} · {visibleWorkspaces[0]!.repoOwner}/
+                      {visibleWorkspaces[0]!.repoName}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {workspaceTone(visibleWorkspaces[0]!)} · {visibleWorkspaces[0]!.status}
+                    </p>
+                  </div>
+                ) : null}
+                <p className="text-sm text-muted-foreground">
+                  Open organization when you need the wider assigned-project and collaborator view.
+                </p>
+                <Button asChild type="button" variant="outline">
+                  <Link to="/organization">Open organization</Link>
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </SectionGrid>
+
+      <SectionGrid className="xl:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle className="flex items-center gap-2">
                   <GitPullRequest className="size-5" />
                   Pull request handoff
                 </CardTitle>
                 <CardDescription>
-                  The fastest branch from customer-web into code review and admin follow-up.
+                  Review output stays on its own route, but the current handoff remains visible on
+                  the dashboard.
                 </CardDescription>
               </div>
               <StatusPill tone={recentPullRequests.length > 0 ? "success" : "neutral"}>
@@ -1587,112 +1642,21 @@ function CustomerLanding() {
                       {(run.resultSummary ?? run.objective) || "Pull request evidence attached."}
                     </p>
                     <div className="mt-4 flex flex-wrap gap-3">
-                      <Button asChild type="button">
+                      <Button asChild size="sm" type="button">
                         <a href={getRunPullRequestUrl(run)!} rel="noreferrer" target="_blank">
                           Open pull request
                         </a>
                       </Button>
-                      <Button asChild type="button" variant="outline">
+                      <Button asChild size="sm" type="button" variant="outline">
                         <Link to="/pull-requests">All pull requests</Link>
                       </Button>
-                      {adminReturnHref ? (
-                        <Button asChild type="button" variant="outline">
-                          <a href={adminReturnHref}>Admin follow-up</a>
-                        </Button>
-                      ) : null}
                     </div>
                   </div>
                 ))}
               </>
             ) : (
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  No recent member-scoped runs expose pull request evidence yet.
-                </p>
-                <Button asChild type="button" variant="outline">
-                  <Link to="/runs">Review run history</Link>
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <CardTitle className="flex items-center gap-2">
-                  <ServerCog className="size-5" />
-                  Devbox access
-                </CardTitle>
-                <CardDescription>
-                  Ready workspace links stay read-only here and only appear when the provisioner has
-                  exposed them.
-                </CardDescription>
-              </div>
-              <StatusPill tone={statusTone(workspaceStatus)}>{workspaceStatus}</StatusPill>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!currentSession ? (
               <p className="text-sm text-muted-foreground">
-                Sign in to see your current devboxes and available IDE links.
-              </p>
-            ) : !resolvedActiveOrganization ? (
-              <p className="text-sm text-muted-foreground">
-                Set an active organization before loading workspace access.
-              </p>
-            ) : workspaceError ? (
-              <p className="text-sm text-destructive">{workspaceError}</p>
-            ) : visibleWorkspaces.length > 0 ? (
-              visibleWorkspaces.map((workspace) => (
-                <div
-                  className="rounded-xl border border-border/60 bg-muted/20 p-4"
-                  key={`${workspace.projectSlug}-${workspace.id}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{workspace.projectName}</p>
-                      <p className="text-sm text-muted-foreground">{workspace.workspaceId}</p>
-                    </div>
-                    <StatusPill tone={workspaceTone(workspace)}>{workspace.status}</StatusPill>
-                  </div>
-                  <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                    <p>
-                      Repo: {workspace.repoOwner}/{workspace.repoName} · Provider:{" "}
-                      {workspace.provider}
-                    </p>
-                    <p>
-                      Image: {workspace.imageFlavor} · Updated:{" "}
-                      {formatDate(workspace.updatedAt ?? workspace.createdAt)}
-                    </p>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-3">
-                    {workspace.ideUrl ? (
-                      <Button asChild type="button" variant="outline">
-                        <a href={workspace.ideUrl} rel="noreferrer" target="_blank">
-                          Open devbox
-                        </a>
-                      </Button>
-                    ) : null}
-                    {workspace.previewUrl ? (
-                      <Button asChild type="button" variant="outline">
-                        <a href={workspace.previewUrl} rel="noreferrer" target="_blank">
-                          Open preview
-                        </a>
-                      </Button>
-                    ) : null}
-                  </div>
-                  {!workspace.ideUrl && !workspace.previewUrl ? (
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      Access links appear here once the workspace reaches a ready state.
-                    </p>
-                  ) : null}
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No active devboxes yet. They will appear here after a run provisions a workspace.
+                No recent member-scoped runs expose pull request evidence yet.
               </p>
             )}
           </CardContent>
@@ -1704,11 +1668,11 @@ function CustomerLanding() {
               <div className="space-y-1">
                 <CardTitle className="flex items-center gap-2">
                   <Activity className="size-5" />
-                  Recent activity
+                  Recent org signals
                 </CardTitle>
                 <CardDescription>
-                  Organization-level context exposed by the internal API, kept secondary to your
-                  member-scoped work queue.
+                  Organization-level context remains secondary on the dashboard and moves to route
+                  detail when you need to investigate.
                 </CardDescription>
               </div>
               <StatusPill tone={statusTone(opsStatus)}>{recentActivity.length}</StatusPill>
@@ -1823,7 +1787,9 @@ function CustomerLanding() {
             )}
           </CardContent>
         </Card>
+      </SectionGrid>
 
+      <SectionGrid>
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">

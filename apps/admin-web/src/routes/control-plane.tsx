@@ -2,7 +2,6 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  ArrowRight,
   FolderKanban,
   LayoutTemplate,
   RefreshCw,
@@ -51,7 +50,7 @@ import {
   toErrorMessage,
   workspaceTone,
 } from "../lib/control-plane";
-import { ControlPlaneNavigation } from "../lib/control-plane-navigation";
+import { ControlPlaneNavigation, controlPlaneRouteGroups } from "../lib/control-plane-navigation";
 
 export const Route = createFileRoute("/control-plane")({
   component: ControlPlaneRoute,
@@ -250,12 +249,6 @@ function ControlPlaneRoute() {
       description="A focused SaaS control plane for projects, workspace runtime state, overview metrics, and release activity. It keeps the new internal-api surfaces visible without cutting into the existing dashboard."
       actions={
         <>
-          <Button asChild type="button" variant="outline">
-            <Link to="/">
-              <ArrowRight className="size-4 rotate-180" />
-              Dashboard
-            </Link>
-          </Button>
           <Button
             aria-label="Refresh control plane"
             onClick={() => void refreshEverything()}
@@ -275,6 +268,41 @@ function ControlPlaneRoute() {
       }
     >
       <ControlPlaneNavigation currentPath="/control-plane" />
+
+      <SectionGrid className="xl:grid-cols-3">
+        {controlPlaneRouteGroups.map((group) => (
+          <Card key={group.label}>
+            <CardHeader>
+              <CardTitle>{group.label}</CardTitle>
+              <CardDescription>{group.description}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {group.routes.map((route) => (
+                <div
+                  className="flex items-start justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 p-3"
+                  key={route.to}
+                >
+                  <div className="space-y-1">
+                    <p className="font-medium">{route.label}</p>
+                    <p className="text-sm text-muted-foreground">{route.description}</p>
+                  </div>
+                  <Button
+                    asChild
+                    size="sm"
+                    type="button"
+                    variant={route.to === "/control-plane" ? "default" : "outline"}
+                  >
+                    <Link to={route.to}>
+                      <route.icon className="size-4" />
+                      {route.to === "/control-plane" ? "Current" : "Open"}
+                    </Link>
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ))}
+      </SectionGrid>
 
       <SectionGrid className="xl:grid-cols-4">
         <StatCard
@@ -483,7 +511,7 @@ function ControlPlaneRoute() {
                 <a href={signInHandoff.href}>Open customer sign in</a>
               </Button>
               <Button asChild type="button" variant="outline">
-                <Link to="/">Admin landing</Link>
+                <Link to="/control-plane">Control plane</Link>
               </Button>
             </div>
           </CardContent>

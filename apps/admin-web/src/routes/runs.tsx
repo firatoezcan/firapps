@@ -786,7 +786,7 @@ function RunsRoute() {
                 <a href={signInHandoff.href}>Open customer sign in</a>
               </Button>
               <Button asChild type="button" variant="outline">
-                <Link to="/">Admin landing</Link>
+                <Link to="/control-plane">Control plane</Link>
               </Button>
             </div>
           </CardContent>

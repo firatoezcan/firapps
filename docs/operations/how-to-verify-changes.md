@@ -33,6 +33,78 @@ Failure interpretation:
 - if builds fail, the application or package entrypoints no longer match the
   documented Vite+ path
 
+### Focused shared UI token verification
+
+Commands:
+
+```bash
+vp run ui#check
+vp run customer-web#build
+vp run admin-web#build
+```
+
+Expected signal:
+
+- `vp run ui#check` exits `0` for the shared shadcn-compatible token surface
+- both frontend builds exit `0` while consuming `@firapps/ui`
+- no shared UI import, Tailwind token, or TanStack Start packaging error
+  appears during the frontend builds
+
+Failure interpretation:
+
+- if `vp run ui#check` fails, the shared UI package contract regressed
+- if either frontend build fails after the shared UI change, the token surface
+  is no longer compatible with the current app consumers
+
+### Focused queue Electric slice verification
+
+**Verification class:** self-contained + external-fixture
+
+Commands:
+
+```bash
+vp run internal-api#build
+vp run admin-web#build
+```
+
+Expected signal:
+
+- `internal-api` builds with the queue metrics endpoint plus the admin-gated
+  Electric shape proxy endpoints for the queue slice
+- `admin-web` builds with the `/queue` TanStack DB + ElectricSQL read path and
+  the fallback back to `/api/internal/queue`
+
+External fixture proof, when an Electric sync service is available:
+
+```bash
+ELECTRIC_URL=http://127.0.0.1:3000 \
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/firapps \
+vp run internal-api#dev
+vp run admin-web#dev
+```
+
+Then open signed-in admin `/queue` and confirm:
+
+- queue cards continue rendering if Electric is unset or unavailable because
+  the route falls back to `/api/internal/queue`
+- when Electric is configured and healthy, queue runs/activity update from the
+  Electric-backed local collections while runtime capacity still comes from
+  `/api/internal/queue/metrics`
+- the migration boundary is still narrow: `/queue` is the only frontend route
+  on TanStack DB + ElectricSQL and the other routes continue using the
+  existing same-origin server-route fetch path
+
+Failure interpretation:
+
+- if `internal-api` build fails, the Electric queue support endpoints or config
+  contract regressed
+- if `admin-web` build fails, the queue route no longer compiles against the
+  Electric/TanStack DB slice
+- if signed-in admin `/queue` hard-fails when Electric is unavailable, the
+  fallback boundary regressed
+- if runtime-capacity cards stop loading unless Electric is healthy, the queue
+  metrics split regressed
+
 ## 2. Local hook setup through Vite+
 
 **Verification class:** self-contained
@@ -144,6 +216,45 @@ Failure interpretation:
   model is no longer what the repo claims
 - if the system Blueprint rows do not exist after startup, the product
   control-plane seed path regressed
+
+### Focused debug login helper verification
+
+**Verification class:** runtime + browser-smoke
+
+Commands:
+
+```bash
+FIRAPPS_DEBUG_LOGIN_ENABLED=true \
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/firapps \
+vp run internal-api#dev
+vp run customer-web#dev
+curl -fsS http://localhost:4001/api/internal/debug-login/personas
+curl -fsS -X POST http://localhost:4001/api/internal/debug-login/personas/founder
+```
+
+Then open `http://localhost:3000/sign-in`, use the `Founder operator` debug
+login action, and confirm the browser lands on the normal signed-in customer
+surface.
+
+Expected signal:
+
+- `FIRAPPS_DEBUG_LOGIN_ENABLED=true` is the only switch that enables this path;
+  do not use `NODE_ENV`
+- the persona list contains the known local/test personas, but the password is
+  only returned by the guarded `POST`
+- the `POST` provisions a verified Better Auth credential account and
+  organization membership, then the UI signs in through `authClient.signIn.email`
+- when `FIRAPPS_DEBUG_LOGIN_ENABLED` is unset or false, the same endpoint
+  returns `404` and customer-web hides the menu
+
+Failure interpretation:
+
+- if a debug persona signs in without going through Better Auth email/password,
+  the implementation has become an unsupported auth bypass
+- if the menu appears while `FIRAPPS_DEBUG_LOGIN_ENABLED` is disabled, the
+  runtime config boundary regressed
+- if the endpoint works but browser login fails, the Better Auth credential
+  provisioning, same-origin proxy, or session-cookie path regressed
 
 ## 4. Better Auth browser and proxy sweep
 

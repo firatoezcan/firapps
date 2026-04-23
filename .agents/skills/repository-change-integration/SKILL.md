@@ -13,6 +13,26 @@ Vite+ entrypoints, CI, or reviewer approval boundaries.
 Keep the repository truthful over time.
 Prevent knowledge from vanishing into chat history, review comments, or tribal memory.
 
+## Session continuity
+
+- before starting a new iteration, check `CURRENT.md` if it exists
+- keep outstanding work in `CURRENT.md` with an explicit assignee tag
+- use `main` for the primary agent and the delegated agent name when ownership
+  has been handed off
+- when a durable operating rule matters for future iterations, persisting it in
+  repo-owned files such as `CURRENT.md`, `CODEX.md`, or this skill is
+  sufficient; do not wait on an external memory copy before treating it as
+  binding
+
+## Team-lead rule for firapps and firops work
+
+- operate as the team lead, not as a lone IC
+- split design, hierarchy, and data-layer lanes deliberately instead of mixing
+  them into one unfocused frontend pass
+- delegate platform, sandbox, and live-cluster runtime work to the backend lane
+  instead of doing it ad hoc from the product lane
+- keep the ownership split visible in `CURRENT.md` whenever work is delegated
+
 ## Workflow
 
 ### 1. Contract loop

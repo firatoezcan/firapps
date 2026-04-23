@@ -24,12 +24,14 @@ This is the canonical map of the current repository documentation.
 ### Contracts
 
 - `contracts/product-repo.md`
+- `contracts/shared-ui-token-strategy.md`
 - `contracts/toolchain.md`
 - `contracts/agent-team.md`
 
 ### Reference
 
 - `reference/repository-layout.md` - top-level structure and directory responsibilities
+- `reference/claude-design-hierarchy-prompt.md` - copy-paste prompt for structural hierarchy redesign across admin and customer pages
 
 ### Verification and review
 

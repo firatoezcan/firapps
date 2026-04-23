@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
-import { ArrowRight, LogIn } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
+import { ArrowRight, KeyRound, LogIn } from "lucide-react";
 
 import { AppPage, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
@@ -11,6 +11,23 @@ import { buildCustomerPath, isEmailNotVerifiedError, toErrorMessage } from "../l
 type SignInSearch = {
   email?: string;
   redirect?: string;
+};
+
+type DebugLoginPersona = {
+  description: string;
+  email: string;
+  key: string;
+  label: string;
+  role: string;
+};
+
+type DebugLoginConfig = {
+  enabled: boolean;
+  personas: DebugLoginPersona[];
+};
+
+type DebugLoginProvisionedPersona = DebugLoginPersona & {
+  password: string;
 };
 
 export const Route = createFileRoute("/sign-in")({
@@ -40,6 +57,43 @@ function SignInPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [debugLoginConfig, setDebugLoginConfig] = useState<DebugLoginConfig | null>(null);
+  const [debugLoginBusyKey, setDebugLoginBusyKey] = useState<string | null>(null);
+  const [debugLoginError, setDebugLoginError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDebugLoginConfig() {
+      try {
+        const response = await fetch("/api/internal/debug-login/personas", {
+          headers: {
+            accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = (await response.json()) as DebugLoginConfig;
+
+        if (!cancelled && payload.enabled && payload.personas.length > 0) {
+          setDebugLoginConfig(payload);
+        }
+      } catch {
+        if (!cancelled) {
+          setDebugLoginConfig(null);
+        }
+      }
+    }
+
+    void loadDebugLoginConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -78,6 +132,46 @@ function SignInPage() {
     } finally {
       setBusy(false);
       setPassword("");
+    }
+  }
+
+  async function handleDebugLogin(personaKey: string) {
+    setDebugLoginBusyKey(personaKey);
+    setDebugLoginError(null);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/internal/debug-login/personas/${personaKey}`, {
+        headers: {
+          accept: "application/json",
+        },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Debug persona provisioning failed with HTTP ${response.status}.`);
+      }
+
+      const payload = (await response.json()) as {
+        persona: DebugLoginProvisionedPersona;
+      };
+      const result = await authClient.signIn.email({
+        email: payload.persona.email,
+        password: payload.persona.password,
+      });
+
+      if (result.error) {
+        throw result.error;
+      }
+
+      await sessionQuery.refetch();
+      await navigate({
+        to: redirectPath,
+      });
+    } catch (caughtError) {
+      setDebugLoginError(toErrorMessage(caughtError, "Unable to use debug login."));
+    } finally {
+      setDebugLoginBusyKey(null);
     }
   }
 
@@ -129,6 +223,51 @@ function SignInPage() {
                 </Button>
               </div>
             </form>
+
+            {debugLoginConfig ? (
+              <div className="mt-5 rounded-xl border border-line-soft bg-surface-subtle p-4">
+                <div className="flex items-start gap-3">
+                  <KeyRound className="mt-0.5 size-4 text-muted-foreground" />
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Debug login</p>
+                      <p className="text-sm text-muted-foreground">
+                        Enabled by <code>FIRAPPS_DEBUG_LOGIN_ENABLED</code>. These personas are
+                        provisioned as verified Better Auth credential accounts before sign-in.
+                      </p>
+                    </div>
+
+                    {debugLoginError ? (
+                      <InlineNotice message={debugLoginError} tone="danger" />
+                    ) : null}
+
+                    <div className="grid gap-2">
+                      {debugLoginConfig.personas.map((persona) => (
+                        <button
+                          className="rounded-lg border border-line-soft bg-background px-3 py-2 text-left text-sm transition hover:border-primary/30 hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={debugLoginBusyKey !== null}
+                          key={persona.key}
+                          onClick={() => void handleDebugLogin(persona.key)}
+                          type="button"
+                        >
+                          <span className="flex flex-wrap items-center gap-2 font-medium text-foreground">
+                            {persona.label}
+                            <span className="rounded-full border border-line-soft px-2 py-0.5 text-xs text-muted-foreground">
+                              {persona.role}
+                            </span>
+                          </span>
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            {debugLoginBusyKey === persona.key
+                              ? "Provisioning and signing in..."
+                              : `${persona.email} · ${persona.description}`}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

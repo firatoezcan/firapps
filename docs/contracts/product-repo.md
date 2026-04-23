@@ -19,6 +19,12 @@
 - `apps/public-api` and `apps/internal-api` are the current backend surfaces
 - Better Auth in `apps/internal-api` is the canonical auth, session,
   organization, and invitation system for the product
+- debug login is not an auth bypass: when `FIRAPPS_DEBUG_LOGIN_ENABLED=true`
+  is set on `internal-api`, customer-web `/sign-in` can show known local/test
+  personas, ask `internal-api` to provision those verified Better Auth
+  credential accounts, and then sign in through the normal Better Auth
+  email/password flow; without that runtime flag, the debug persona endpoint
+  returns `404` and the menu is hidden
 - `apps/internal-api` now also owns the first product control-plane slice for
   org-scoped projects, GitHub-first repository registration validation,
   Blueprint templates, dispatch records, run records, run steps, run
@@ -54,6 +60,14 @@
   concrete first-project -> Blueprint -> run -> review setup sequence, and
   signed-out deep links on core control-plane routes hand users back through
   the Better Auth customer sign-in path
+- the first frontend TanStack DB + ElectricSQL slice now lives on
+  `apps/admin-web` `/queue`: org-scoped queue runs, dispatches, projects,
+  blueprints, workspaces, run-step counts, and activity can sync through
+  `internal-api`'s admin-gated Electric shape proxy endpoints when
+  `ELECTRIC_URL` is configured; the same route still falls back to the
+  existing `/api/internal/queue` snapshot when Electric is unavailable or
+  unhealthy, and the rest of the frontend data layer remains on the existing
+  same-origin TanStack Start server-route plus fetch path
 - when the product runs behind sibling subdomains such as
   `customer.firapps.platform.localhost` and `admin.firapps.platform.localhost`,
   `apps/internal-api` may receive `BETTER_AUTH_COOKIE_DOMAIN` so Better Auth
@@ -83,6 +97,11 @@
   provisioner/runtime seam
 - `packages/ui`, `packages/backend-common`, and `packages/db` are real shared
   runtime packages for those apps
+- `packages/ui` stays shadcn-compatible and differentiates the product
+  primarily through shared design tokens, typography, spacing, and surface
+  treatment rather than a bespoke component fork
+- the current shared UI token boundary is defined in
+  `docs/contracts/shared-ui-token-strategy.md`
 - `Tiltfile` plus `dev/k8s/` are the current local-only in-cluster backend
   development path for `kind-platform`
 - `.github/workflows/ci.yml` is the automatic repo verification and publish path

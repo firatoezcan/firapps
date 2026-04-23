@@ -13,6 +13,9 @@
   "dependencies": {
     "@firapps/ui": "workspace:*",
     "@tailwindcss/vite": "catalog:",
+    "@tanstack/db": "catalog:",
+    "@tanstack/electric-db-collection": "catalog:",
+    "@tanstack/react-db": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-start": "catalog:",

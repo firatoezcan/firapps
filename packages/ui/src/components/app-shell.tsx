@@ -31,18 +31,22 @@ function AppPage({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-svh bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.12),_transparent_42%),linear-gradient(180deg,hsl(var(--background)),hsl(var(--muted)/0.42))] px-6 py-8 text-foreground">
+    <main className="min-h-svh px-6 py-8 text-foreground">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        <section className="flex flex-col gap-4 rounded-3xl border border-border/60 bg-background/80 px-6 py-8 shadow-sm backdrop-blur sm:px-8">
-          <p className="text-sm font-medium uppercase tracking-[0.22em] text-muted-foreground">
+        <section className="flex flex-col gap-4 rounded-3xl border border-line-soft bg-surface-raised px-6 py-8 shadow-[var(--shadow-card)] backdrop-blur-md sm:px-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted-foreground">
             {eyebrow}
           </p>
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end lg:gap-8">
             <div className="space-y-3">
               <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">{title}</h1>
-              <p className="max-w-2xl text-base leading-7 text-muted-foreground">{description}</p>
+              <p className="max-w-3xl text-base leading-7 text-muted-foreground">{description}</p>
             </div>
-            {actions ? <div className="flex flex-wrap gap-3">{actions}</div> : null}
+            {actions ? (
+              <div className="flex flex-wrap gap-3 rounded-2xl border border-line-strong bg-surface-action px-4 py-4 shadow-[var(--shadow-subtle)] backdrop-blur-sm lg:max-w-xl lg:justify-end">
+                {actions}
+              </div>
+            ) : null}
           </div>
         </section>
         {children}

@@ -4,14 +4,18 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@firapps/ui/lib/utils";
 
 const statusPillVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+  "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium shadow-[var(--shadow-subtle)]",
   {
     variants: {
       tone: {
-        neutral: "border-border bg-muted text-foreground",
-        success: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-        warning: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-        danger: "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+        neutral:
+          "border-[var(--status-neutral-border)] bg-[var(--status-neutral-bg)] text-[var(--status-neutral-foreground)]",
+        success:
+          "border-[var(--status-success-border)] bg-[var(--status-success-bg)] text-[var(--status-success-foreground)]",
+        warning:
+          "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning-foreground)]",
+        danger:
+          "border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] text-[var(--status-danger-foreground)]",
       },
     },
     defaultVariants: {

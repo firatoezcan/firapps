@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { hashPassword } from "better-auth/crypto";
 import type { Context } from "hono";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -10,6 +11,7 @@ import { checkDatabaseConnection, closeDatabase, runMigrations } from "@firapps/
 
 import { auth } from "./auth.js";
 import { internalApiEnv, listOperatorEmails, operatorEmailAllowed } from "./config.js";
+import { electricSyncConfigured, proxyElectricShape } from "./electric.js";
 import {
   buildRunBranchName,
   createRunPullRequest,
@@ -32,6 +34,7 @@ import {
 import { runtime } from "./db/runtime.js";
 import {
   activityEvents,
+  accounts,
   blueprints,
   dispatches,
   deployments,
@@ -257,6 +260,43 @@ let runReconciliationInFlight: Promise<void> | null = null;
 let runReconciliationRequested = false;
 const runExecutionInFlight = new Set<string>();
 
+const debugLoginOrganization = {
+  name: "Firapps Debug Workspace",
+  slug: "firapps-debug",
+};
+
+const debugLoginPersonas = [
+  {
+    description: "Owner and operator-allowlisted account for founder/admin flows.",
+    email: "founder@operator.local",
+    key: "founder",
+    label: "Founder operator",
+    name: "Debug Founder",
+    password: "FirappsDebug!2026",
+    role: "owner",
+  },
+  {
+    description: "Admin member for organization management without owner identity.",
+    email: "admin@operator.local",
+    key: "admin",
+    label: "Organization admin",
+    name: "Debug Admin",
+    password: "FirappsDebug!2026",
+    role: "admin",
+  },
+  {
+    description: "Regular member account for non-admin customer and admin visibility checks.",
+    email: "member@member.local",
+    key: "member",
+    label: "Regular member",
+    name: "Debug Member",
+    password: "FirappsDebug!2026",
+    role: "member",
+  },
+] as const;
+
+type DebugLoginPersona = (typeof debugLoginPersonas)[number];
+
 if (internalApiEnv.RUN_MIGRATIONS_ON_BOOT) {
   const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
   await runMigrations(runtime, migrationsFolder);
@@ -267,6 +307,52 @@ await ensureOperationsSeed(runtime);
 const app = createBackendApp(internalApiEnv.APP_NAME, () => checkDatabaseConnection(runtime));
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+app.get(`${internalApiEnv.API_PREFIX}/debug-login/personas`, (c) => {
+  if (!internalApiEnv.FIRAPPS_DEBUG_LOGIN_ENABLED) {
+    return debugLoginDisabledResponse(c);
+  }
+
+  return c.json({
+    enabled: true,
+    personas: debugLoginPersonas.map(debugPersonaPublicFields),
+  });
+});
+
+app.post(`${internalApiEnv.API_PREFIX}/debug-login/personas/:personaKey`, async (c) => {
+  if (!internalApiEnv.FIRAPPS_DEBUG_LOGIN_ENABLED) {
+    return debugLoginDisabledResponse(c);
+  }
+
+  const personaKey = c.req.param("personaKey");
+  const persona = debugLoginPersonas.find((entry) => entry.key === personaKey);
+
+  if (!persona) {
+    return c.json({ error: "debug_persona_not_found" }, 404);
+  }
+
+  const provisioned = await ensureDebugLoginPersona(persona);
+
+  c.get("log").set({
+    debugLogin: {
+      organizationId: provisioned.organization.id,
+      persona: persona.key,
+      userId: provisioned.user.id,
+    },
+  });
+
+  return c.json({
+    organization: {
+      id: provisioned.organization.id,
+      name: provisioned.organization.name,
+      slug: provisioned.organization.slug,
+    },
+    persona: {
+      ...provisioned.persona,
+      password: persona.password,
+    },
+  });
+});
 
 async function requireSession(requestHeaders: Headers) {
   return auth.api.getSession({
@@ -280,6 +366,110 @@ function isUniqueViolation(error: unknown) {
 
 function toLoggableError(error: unknown) {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function debugPersonaPublicFields(persona: DebugLoginPersona) {
+  return {
+    description: persona.description,
+    email: persona.email,
+    key: persona.key,
+    label: persona.label,
+    role: persona.role,
+  };
+}
+
+function debugLoginDisabledResponse(c: Context) {
+  return c.json({ error: "not_found" }, 404);
+}
+
+async function ensureDebugLoginOrganization() {
+  const [existing] = await runtime.db
+    .select()
+    .from(organizations)
+    .where(eq(organizations.slug, debugLoginOrganization.slug))
+    .limit(1);
+
+  if (existing) {
+    return existing;
+  }
+
+  const [created] = await runtime.db
+    .insert(organizations)
+    .values({
+      name: debugLoginOrganization.name,
+      slug: debugLoginOrganization.slug,
+    })
+    .returning();
+
+  return created;
+}
+
+async function ensureDebugLoginPersona(persona: DebugLoginPersona) {
+  const normalizedEmail = persona.email.toLowerCase();
+  const now = new Date();
+  const [existingUser] = await runtime.db
+    .select()
+    .from(users)
+    .where(eq(users.email, normalizedEmail))
+    .limit(1);
+
+  const [user] = existingUser
+    ? await runtime.db
+        .update(users)
+        .set({
+          emailVerified: true,
+          name: persona.name,
+          updatedAt: now,
+        })
+        .where(eq(users.id, existingUser.id))
+        .returning()
+    : await runtime.db
+        .insert(users)
+        .values({
+          email: normalizedEmail,
+          emailVerified: true,
+          name: persona.name,
+        })
+        .returning();
+
+  const passwordHash = await hashPassword(persona.password);
+  await runtime.db
+    .insert(accounts)
+    .values({
+      accountId: user.id,
+      password: passwordHash,
+      providerId: "credential",
+      userId: user.id,
+    })
+    .onConflictDoUpdate({
+      target: [accounts.providerId, accounts.accountId],
+      set: {
+        password: passwordHash,
+        updatedAt: now,
+      },
+    });
+
+  const organization = await ensureDebugLoginOrganization();
+
+  await runtime.db
+    .insert(organizationMemberships)
+    .values({
+      organizationId: organization.id,
+      role: persona.role,
+      userId: user.id,
+    })
+    .onConflictDoUpdate({
+      target: [organizationMemberships.organizationId, organizationMemberships.userId],
+      set: {
+        role: persona.role,
+      },
+    });
+
+  return {
+    organization,
+    persona: debugPersonaPublicFields(persona),
+    user,
+  };
 }
 
 function buildProvisionerErrorResponse(c: Context, error: unknown) {
@@ -1870,6 +2060,67 @@ async function buildQueueSnapshot(input: { organizationId: string; requestedByUs
       runtimeSnapshot,
     }),
     runs: runItems,
+  };
+}
+
+async function buildQueueMetricsSnapshot(input: { organizationId: string }) {
+  const [runRecords, projectRows, workspaceRows] = await Promise.all([
+    runtime.db
+      .select()
+      .from(runs)
+      .where(eq(runs.organizationId, input.organizationId))
+      .orderBy(desc(runs.createdAt))
+      .limit(100),
+    runtime.db
+      .select({ id: organizationTenants.id })
+      .from(organizationTenants)
+      .where(eq(organizationTenants.organizationId, input.organizationId)),
+    runtime.db
+      .select({ id: organizationWorkspaces.id, status: organizationWorkspaces.status })
+      .from(organizationWorkspaces)
+      .innerJoin(organizationTenants, eq(organizationWorkspaces.tenantId, organizationTenants.id))
+      .where(
+        and(
+          eq(organizationTenants.organizationId, input.organizationId),
+          sql`${organizationWorkspaces.status} <> 'deleted'`,
+        ),
+      ),
+  ]);
+  const runItems = await buildRunResponseItems(runRecords);
+  const queueRuns = runItems.filter((runItem) =>
+    ["queued", "blocked", "provisioning", "active", "other"].includes(
+      getQueueStage(runItem.status),
+    ),
+  );
+  let runtimeSnapshot: Awaited<ReturnType<typeof readProvisionerOperatorRuntime>> | null = null;
+  let runtimeErrorMessage: string | null = null;
+
+  try {
+    runtimeSnapshot = await readProvisionerOperatorRuntime();
+  } catch (error) {
+    runtimeErrorMessage =
+      error instanceof Error ? error.message : "Provisioner runtime capacity probe failed.";
+  }
+
+  return {
+    electricEnabled: electricSyncConfigured(),
+    generatedAt: new Date().toISOString(),
+    overview: {
+      activeRuns: queueRuns.length,
+      failedRuns: runItems.filter((runItem) => getQueueStage(runItem.status) === "failed").length,
+      pendingInvitations: 0,
+      projectCount: projectRows.length,
+      readyWorkspaces: workspaceRows.filter((workspaceRow) =>
+        workspaceStatusIsReady(workspaceRow.status),
+      ).length,
+      runCount: runItems.length,
+      workspaceCount: workspaceRows.length,
+    },
+    runtimeCapacity: buildQueueRuntimeCapacity({
+      queueRuns,
+      runtimeErrorMessage,
+      runtimeSnapshot,
+    }),
   };
 }
 
@@ -3673,6 +3924,195 @@ app.get(`${internalApiEnv.API_PREFIX}/queue`, async (c) => {
       organizationId: accessResult.access.organizationId,
     }),
   );
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/queue/metrics`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, {
+    requireAdmin: true,
+  });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return c.json(
+    await buildQueueMetricsSnapshot({
+      organizationId: accessResult.access.organizationId,
+    }),
+  );
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/runs`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: [
+      "id",
+      "organization_id",
+      "tenant_id",
+      "blueprint_id",
+      "requested_by_user_id",
+      "workspace_record_id",
+      "source",
+      "title",
+      "objective",
+      "status",
+      "branch_name",
+      "pr_url",
+      "result_summary",
+      "failure_message",
+      "queued_at",
+      "started_at",
+      "completed_at",
+      "created_at",
+      "updated_at",
+    ],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.runs",
+    where: "organization_id = $1",
+  });
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/dispatches`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: [
+      "id",
+      "organization_id",
+      "tenant_id",
+      "blueprint_id",
+      "run_id",
+      "source",
+      "requested_by_name",
+      "requested_by_email",
+      "created_at",
+      "updated_at",
+    ],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.dispatches",
+    where: "organization_id = $1",
+  });
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/projects`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: ["id", "organization_id", "name", "slug"],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.organization_tenants",
+    where: "organization_id = $1",
+  });
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/blueprints`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: ["id", "organization_id", "name"],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.blueprints",
+    where: "organization_id = $1 or organization_id is null",
+  });
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/workspaces`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: [
+      "id",
+      "tenant_id",
+      "workspace_id",
+      "provider",
+      "repo_provider",
+      "repo_owner",
+      "repo_name",
+      "image_flavor",
+      "nix_packages",
+      "status",
+      "ide_url",
+      "preview_url",
+      "created_at",
+      "updated_at",
+    ],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.organization_workspaces",
+    where:
+      "status <> 'deleted' and tenant_id in (select id from operations.organization_tenants where organization_id = $1)",
+  });
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/run-steps`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: ["id", "run_id", "status"],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.run_steps",
+    where: "run_id in (select id from operations.runs where organization_id = $1)",
+  });
+});
+
+app.get(`${internalApiEnv.API_PREFIX}/electric/queue/activity`, async (c) => {
+  const accessResult = await requireOrganizationAccess(c, { requireAdmin: true });
+
+  if (accessResult.response) {
+    return accessResult.response;
+  }
+
+  return proxyElectricShape(c, {
+    columns: ["id", "organization_id", "kind", "title", "description", "status", "occurred_at"],
+    params: {
+      1: accessResult.access.organizationId,
+    },
+    replica: "full",
+    table: "operations.activity_events",
+    where: "organization_id = $1",
+  });
 });
 
 app.get(`${internalApiEnv.API_PREFIX}/blueprints`, async (c) => {

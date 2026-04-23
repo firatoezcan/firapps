@@ -30,6 +30,14 @@ process.env.RUN_RECONCILE_INTERVAL_MS ??= "5000";
 process.env.RUN_WORKSPACE_RETENTION_MS ??= "60000";
 process.env.DISPATCH_WEBHOOK_SECRET ??= "devboxes-local-dispatch-webhook-secret-2026-04-22";
 
+if (process.env.ELECTRIC_URL?.trim() === "") {
+  delete process.env.ELECTRIC_URL;
+}
+
+if (process.env.ELECTRIC_SECRET?.trim() === "") {
+  delete process.env.ELECTRIC_SECRET;
+}
+
 export const internalApiEnv = readServiceEnv(
   z.object({
     API_PREFIX: z.string().default("/api/internal"),
@@ -43,6 +51,13 @@ export const internalApiEnv = readServiceEnv(
     BETTER_AUTH_SECRET: z.string().min(32),
     BETTER_AUTH_COOKIE_DOMAIN: z.string().min(1).optional(),
     DISPATCH_WEBHOOK_SECRET: z.string().min(1),
+    ELECTRIC_SECRET: z.string().min(1).optional(),
+    ELECTRIC_URL: z.string().url().optional(),
+    FIRAPPS_DEBUG_LOGIN_ENABLED: z
+      .enum(["0", "1", "false", "true", "off", "on", "no", "yes"])
+      .optional()
+      .default("false")
+      .transform((value) => ["1", "true", "on", "yes"].includes(value.toLowerCase())),
     GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),
     GITHUB_TOKEN: z.string().min(1).optional(),
     MAILPIT_API_URL: z.string().url().optional(),

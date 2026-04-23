@@ -11,7 +11,10 @@ catalog:
   "@react-email/components": ^1.0.12
   "@react-email/render": ^2.0.7
   "@tailwindcss/vite": ^4.1.18
+  "@tanstack/db": ^0.6.5
+  "@tanstack/electric-db-collection": ^0.3.3
   "@tanstack/eslint-config": ^0.4.0
+  "@tanstack/react-db": ^0.1.83
   "@tanstack/react-query": ^5.90.2
   "@tanstack/react-router": ^1.132.0
   "@tanstack/react-start": ^1.132.0

@@ -311,9 +311,9 @@ function ProjectsRoute() {
       actions={
         <>
           <Button asChild type="button" variant="outline">
-            <Link to="/">
+            <Link to="/control-plane">
               <ArrowRight className="size-4 rotate-180" />
-              Dashboard
+              Control plane
             </Link>
           </Button>
           <Button

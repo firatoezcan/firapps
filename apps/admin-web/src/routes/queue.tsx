@@ -25,6 +25,12 @@ import {
 import { Button } from "@firapps/ui/components/button";
 
 import { buildCustomerSignInHref, getCurrentAdminPath } from "../lib/admin-sign-in-handoff";
+import {
+  type RuntimeCapacity,
+  fetchQueueMetrics,
+  preloadAdminQueueCollections,
+  useAdminQueueLiveSlice,
+} from "../lib/admin-queue-data";
 import { authClient } from "../lib/auth-client";
 import {
   type ActivityItem,
@@ -41,7 +47,6 @@ import {
   getRunQueueStage,
   getRunRetryActionLabel,
   normalizeActivity,
-  normalizeOverview,
   normalizeRuns,
   requestInternalApi,
   retryRun,
@@ -63,40 +68,6 @@ const emptyOverview: Overview = {
   readyWorkspaces: 0,
   runCount: 0,
   workspaceCount: 0,
-};
-
-type QueueSummary = {
-  active: number;
-  blocked: number;
-  failed: number;
-  provisioning: number;
-  queued: number;
-  quiet: number;
-  queueRuns: number;
-};
-
-type RuntimeCapacity = {
-  capacityStatus: string;
-  detail: string;
-  executingRuns: number;
-  failedWorkspaces: number;
-  operatorStatus: string;
-  provisioningWorkspaces: number;
-  readyNodes: number;
-  readyWorkspaces: number;
-  totalNodes: number;
-  totalWorkspaces: number;
-  waitingRuns: number;
-};
-
-const emptyQueueSummary: QueueSummary = {
-  active: 0,
-  blocked: 0,
-  failed: 0,
-  provisioning: 0,
-  queued: 0,
-  quiet: 0,
-  queueRuns: 0,
 };
 
 const emptyRuntimeCapacity: RuntimeCapacity = {
@@ -125,28 +96,31 @@ function QueueRoute() {
   const canManageRuns = activeRole === "owner" || activeRole === "admin";
   const signInHandoff = buildCustomerSignInHref(getCurrentAdminPath("/queue"), "/queue");
 
-  const [runStatus, setRunStatus] = useState<LoadStatus>("idle");
-  const [runError, setRunError] = useState<string | null>(null);
-  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [metricsStatus, setMetricsStatus] = useState<LoadStatus>("idle");
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [electricEnabled, setElectricEnabled] = useState(false);
+  const [fallbackRuns, setFallbackRuns] = useState<RunRecord[]>([]);
+  const [fallbackActivity, setFallbackActivity] = useState<ActivityItem[]>([]);
   const [overview, setOverview] = useState<Overview>(emptyOverview);
-  const [queueSummary, setQueueSummary] = useState<QueueSummary>(emptyQueueSummary);
   const [runtimeCapacity, setRuntimeCapacity] = useState<RuntimeCapacity>(emptyRuntimeCapacity);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{
     message: string;
     tone: "danger" | "success";
   } | null>(null);
+  const liveSlice = useAdminQueueLiveSlice(
+    Boolean(session && activeOrganization?.id && electricEnabled),
+  );
 
   useEffect(() => {
     if (!session || !activeOrganization?.id) {
-      setRunStatus("idle");
-      setRunError(null);
-      setRuns([]);
+      setMetricsStatus("idle");
+      setMetricsError(null);
+      setElectricEnabled(false);
+      setFallbackRuns([]);
+      setFallbackActivity([]);
       setOverview(emptyOverview);
-      setQueueSummary(emptyQueueSummary);
       setRuntimeCapacity(emptyRuntimeCapacity);
-      setActivity([]);
       setRetryingRunId(null);
       setNotice(null);
       return;
@@ -160,6 +134,22 @@ function QueueRoute() {
       window.location.replace(signInHandoff.href);
     }
   }, [session, sessionQuery.isPending, signInHandoff.href]);
+
+  useEffect(() => {
+    if (!electricEnabled || !liveSlice.error) {
+      return;
+    }
+
+    setElectricEnabled(false);
+    void refreshFallbackQueueSnapshot();
+  }, [electricEnabled, liveSlice.error]);
+
+  const runs = electricEnabled ? liveSlice.runs : fallbackRuns;
+  const activity = electricEnabled ? liveSlice.activity : fallbackActivity;
+  const runStatus = electricEnabled
+    ? combineStatuses(metricsStatus, liveSlice.status)
+    : metricsStatus;
+  const runError = metricsError ?? (electricEnabled ? liveSlice.error : null);
 
   const queueRuns = useMemo(
     () =>
@@ -212,6 +202,18 @@ function QueueRoute() {
     [blockedRuns, queuedRuns],
   );
   const oldestWaitingRun = waitingRuns[0] ?? null;
+  const queueSummary = useMemo(
+    () => ({
+      active: queueRuns.filter((run) => getRunQueueStage(run) === "active").length,
+      blocked: blockedRuns.length,
+      failed: runs.filter((run) => getRunQueueStage(run) === "failed").length,
+      provisioning: queueRuns.filter((run) => getRunQueueStage(run) === "provisioning").length,
+      queued: queuedRuns.length,
+      quiet: quietQueueRuns.length,
+      queueRuns: queueRuns.length,
+    }),
+    [blockedRuns.length, queueRuns, queuedRuns.length, quietQueueRuns.length, runs],
+  );
 
   async function handleRetryRun(run: RunRecord) {
     setRetryingRunId(run.id);
@@ -226,7 +228,11 @@ function QueueRoute() {
           : `${getRunRetryActionLabel(run)} accepted.`,
         tone: "success",
       });
-      await refreshQueueView();
+      if (electricEnabled) {
+        await Promise.all([refreshQueueMetrics(), preloadAdminQueueCollections()]);
+      } else {
+        await refreshQueueView();
+      }
     } catch (caughtError) {
       setNotice({
         message: toErrorMessage(caughtError, "Unable to retry the selected run."),
@@ -237,33 +243,65 @@ function QueueRoute() {
     }
   }
 
+  async function refreshQueueMetrics() {
+    setMetricsStatus("loading");
+    setMetricsError(null);
+
+    try {
+      const metrics = await fetchQueueMetrics();
+
+      setElectricEnabled(metrics.electricEnabled);
+      setOverview(metrics.overview);
+      setRuntimeCapacity(metrics.runtimeCapacity);
+      setMetricsStatus("ready");
+      return metrics;
+    } catch (caughtError) {
+      setMetricsStatus("error");
+      setMetricsError(toErrorMessage(caughtError, "Unable to load queue health data."));
+      setElectricEnabled(false);
+      setOverview(emptyOverview);
+      setRuntimeCapacity(emptyRuntimeCapacity);
+      throw caughtError;
+    }
+  }
+
   async function refreshQueueView() {
-    setRunStatus("loading");
-    setRunError(null);
+    try {
+      const metrics = await refreshQueueMetrics();
+
+      if (metrics.electricEnabled) {
+        setFallbackRuns([]);
+        setFallbackActivity([]);
+        await preloadAdminQueueCollections();
+        return;
+      }
+    } catch {
+      setFallbackRuns([]);
+      setFallbackActivity([]);
+      return;
+    }
+
+    await refreshFallbackQueueSnapshot();
+  }
+
+  async function refreshFallbackQueueSnapshot() {
+    setMetricsStatus("loading");
+    setMetricsError(null);
 
     try {
       const payload = (await requestInternalApi("/queue")) as {
         activity?: unknown[];
-        overview?: unknown;
-        queueSummary?: unknown;
-        runtimeCapacity?: unknown;
         runs?: unknown[];
       } | null;
 
-      setRuns(normalizeRuns(payload?.runs));
-      setOverview(normalizeOverview(payload?.overview));
-      setQueueSummary(normalizeQueueSummary(payload?.queueSummary));
-      setRuntimeCapacity(normalizeRuntimeCapacity(payload?.runtimeCapacity));
-      setActivity(normalizeActivity(payload?.activity));
-      setRunStatus("ready");
+      setFallbackRuns(normalizeRuns(payload?.runs));
+      setFallbackActivity(normalizeActivity(payload?.activity));
+      setMetricsStatus("ready");
     } catch (caughtError) {
-      setRunStatus("error");
-      setRunError(toErrorMessage(caughtError, "Unable to load queue health data."));
-      setRuns([]);
-      setOverview(emptyOverview);
-      setQueueSummary(emptyQueueSummary);
-      setRuntimeCapacity(emptyRuntimeCapacity);
-      setActivity([]);
+      setMetricsStatus("error");
+      setMetricsError(toErrorMessage(caughtError, "Unable to load queue health data."));
+      setFallbackRuns([]);
+      setFallbackActivity([]);
     }
   }
 
@@ -271,13 +309,13 @@ function QueueRoute() {
     <AppPage
       eyebrow="Admin web"
       title="Run queue"
-      description="A queue-facing view over the dedicated `/api/internal/queue` snapshot. It now reads one backend surface for queued work, queue-age health, recent activity, and the same retryable run detail used elsewhere in admin-web."
+      description="The first TanStack DB + ElectricSQL slice now keeps Postgres-backed queue rows live on this page, while provisioner/runtime capacity remains on the existing HTTP snapshot."
       actions={
         <>
           <Button asChild type="button" variant="outline">
-            <Link to="/">
+            <Link to="/control-plane">
               <ArrowRight className="size-4 rotate-180" />
-              Dashboard
+              Control plane
             </Link>
           </Button>
           <Button
@@ -387,8 +425,8 @@ function QueueRoute() {
               Capacity snapshot
             </CardTitle>
             <CardDescription>
-              Queue counts paired with the provisioner runtime snapshot from the same backend
-              surface, so operator capacity is no longer inferred only from timestamps.
+              Queue counts are now derived from the Electric-backed local cache, while the
+              provisioner runtime snapshot still comes from the backend HTTP surface.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
@@ -429,8 +467,8 @@ function QueueRoute() {
             </div>
             <p className="rounded-xl border border-dashed p-3 text-muted-foreground">
               Queue age and quiet/fresh labels still come from dispatch and run timestamps, but the
-              node/workspace counters above now come from the provisioner runtime bridge instead of
-              page-local heuristics alone.
+              node/workspace counters above still come from the provisioner runtime bridge instead
+              of page-local heuristics alone.
             </p>
           </CardContent>
         </Card>
@@ -467,7 +505,8 @@ function QueueRoute() {
           <CardHeader>
             <CardTitle>Recent activity</CardTitle>
             <CardDescription>
-              Latest activity rows returned by `/api/internal/activity`.
+              Latest activity rows now replicated into the page-local Electric slice from
+              `/api/internal/electric/queue/activity`.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -632,46 +671,6 @@ function KeyValue({ label, value }: { label: string; value: string }) {
   );
 }
 
-function normalizeQueueSummary(entry: unknown): QueueSummary {
-  if (!entry || typeof entry !== "object") {
-    return emptyQueueSummary;
-  }
-
-  const value = entry as Record<string, unknown>;
-
-  return {
-    active: readNumber(value, "active") ?? 0,
-    blocked: readNumber(value, "blocked") ?? 0,
-    failed: readNumber(value, "failed") ?? 0,
-    provisioning: readNumber(value, "provisioning") ?? 0,
-    queued: readNumber(value, "queued") ?? 0,
-    quiet: readNumber(value, "quiet") ?? 0,
-    queueRuns: readNumber(value, "queueRuns") ?? readNumber(value, "queue_runs") ?? 0,
-  };
-}
-
-function normalizeRuntimeCapacity(entry: unknown): RuntimeCapacity {
-  if (!entry || typeof entry !== "object") {
-    return emptyRuntimeCapacity;
-  }
-
-  const value = entry as Record<string, unknown>;
-
-  return {
-    capacityStatus: readString(value, "capacityStatus") ?? "unknown",
-    detail: readString(value, "detail") ?? "Provisioner runtime capacity is not available.",
-    executingRuns: readNumber(value, "executingRuns") ?? 0,
-    failedWorkspaces: readNumber(value, "failedWorkspaces") ?? 0,
-    operatorStatus: readString(value, "operatorStatus") ?? "unknown",
-    provisioningWorkspaces: readNumber(value, "provisioningWorkspaces") ?? 0,
-    readyNodes: readNumber(value, "readyNodes") ?? 0,
-    readyWorkspaces: readNumber(value, "readyWorkspaces") ?? 0,
-    totalNodes: readNumber(value, "totalNodes") ?? 0,
-    totalWorkspaces: readNumber(value, "totalWorkspaces") ?? 0,
-    waitingRuns: readNumber(value, "waitingRuns") ?? 0,
-  };
-}
-
 function getQueueFreshness(run: RunRecord) {
   const stage = getRunQueueStage(run);
   const referenceAt =
@@ -699,6 +698,22 @@ function toTimestamp(value: string | null | undefined) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function combineStatuses(left: LoadStatus, right: LoadStatus) {
+  if (left === "error" || right === "error") {
+    return "error";
+  }
+
+  if (left === "loading" || right === "loading") {
+    return "loading";
+  }
+
+  if (left === "ready" && right === "ready") {
+    return "ready";
+  }
+
+  return "idle";
+}
+
 function MessageCard({
   description,
   icon,
@@ -719,18 +734,6 @@ function MessageCard({
       </CardHeader>
     </Card>
   );
-}
-
-function readNumber(entry: Record<string, unknown>, key: string) {
-  const candidate = entry[key];
-
-  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
-}
-
-function readString(entry: Record<string, unknown>, key: string) {
-  const candidate = entry[key];
-
-  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : null;
 }
 
 function runtimeCapacityTone(status: string) {

@@ -8,49 +8,82 @@ import {
   UserRound,
 } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, cn } from "@firapps/ui";
+import { cn } from "@firapps/ui";
 import { Button } from "@firapps/ui/components/button";
 
-const customerRoutes = [
-  {
-    description: "Member dashboard for my runs, pull requests, and the next useful action.",
-    icon: LayoutDashboard,
-    label: "Dashboard",
-    to: "/",
-  },
-  {
-    description: "Member-scoped run history and current execution state for your work.",
-    icon: ClipboardList,
-    label: "Runs",
-    to: "/runs",
-  },
-  {
-    description: "Pull request links and branch evidence exposed by recent runs.",
-    icon: GitPullRequest,
-    label: "Pull requests",
-    to: "/pull-requests",
-  },
-  {
-    description: "Personal invitation inbox and direct links into invite acceptance flow.",
-    icon: MailPlus,
-    label: "Invitations",
-    to: "/invitations",
-  },
-  {
-    description: "Organization roster, projects, and devbox access.",
-    icon: Building2,
-    label: "Organization",
-    to: "/organization",
-  },
-  {
-    description: "Session details, sign-out, and organization switching.",
-    icon: UserRound,
-    label: "Account",
-    to: "/account",
-  },
-] as const;
+type CustomerRoute = {
+  description: string;
+  icon: typeof LayoutDashboard;
+  label: string;
+  to: "/" | "/account" | "/invitations" | "/organization" | "/pull-requests" | "/runs";
+};
 
-type CustomerRoutePath = (typeof customerRoutes)[number]["to"];
+type CustomerRouteGroup = {
+  description: string;
+  label: string;
+  routes: readonly CustomerRoute[];
+};
+
+export const customerRouteGroups = [
+  {
+    description: "Stay in the member-work path first: dashboard, runs, and pull-request follow-up.",
+    label: "Work",
+    routes: [
+      {
+        description: "Member dashboard for the next useful action and route handoff.",
+        icon: LayoutDashboard,
+        label: "Dashboard",
+        to: "/",
+      },
+      {
+        description: "Member-scoped run history and current execution state.",
+        icon: ClipboardList,
+        label: "Runs",
+        to: "/runs",
+      },
+      {
+        description: "Pull request links and branch evidence from your runs.",
+        icon: GitPullRequest,
+        label: "Pull requests",
+        to: "/pull-requests",
+      },
+    ],
+  },
+  {
+    description:
+      "Open the wider organization context only when you need roster or devbox visibility.",
+    label: "Context",
+    routes: [
+      {
+        description: "Organization roster, assigned projects, and devbox access.",
+        icon: Building2,
+        label: "Organization",
+        to: "/organization",
+      },
+    ],
+  },
+  {
+    description:
+      "Keep invite handling and session management visible, but secondary to the work path.",
+    label: "Support",
+    routes: [
+      {
+        description: "Personal invitation inbox and direct invite acceptance links.",
+        icon: MailPlus,
+        label: "Invitations",
+        to: "/invitations",
+      },
+      {
+        description: "Session details, sign-out, and organization switching.",
+        icon: UserRound,
+        label: "Account",
+        to: "/account",
+      },
+    ],
+  },
+] as const satisfies readonly CustomerRouteGroup[];
+
+export type CustomerRoutePath = (typeof customerRouteGroups)[number]["routes"][number]["to"];
 
 export function CustomerRouteNavigation({
   className,
@@ -60,45 +93,47 @@ export function CustomerRouteNavigation({
   currentPath?: CustomerRoutePath;
 }) {
   return (
-    <Card className={cn("border-dashed", className)}>
-      <CardHeader>
-        <CardTitle>Workspace routes</CardTitle>
-        <CardDescription>
-          Each page stays tied to the current Better Auth session and same-origin internal-api read
-          surface. When richer controls do not exist yet, the route says so plainly.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        {customerRoutes.map((route) => {
-          const Icon = route.icon;
-          const isCurrent = route.to === currentPath;
+    <nav className={cn("rounded-2xl border border-dashed bg-muted/20 p-4", className)}>
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-foreground">Workspace quick nav</p>
+        <p className="text-sm text-muted-foreground">
+          The route order follows the intended member path. This stays compact on interior pages so
+          dashboard context and run details keep visual priority.
+        </p>
+      </div>
 
-          return (
-            <div
-              className={cn(
-                "rounded-2xl border p-4 shadow-sm transition-colors",
-                isCurrent ? "border-foreground/30 bg-accent/40" : "border-border/70 bg-background",
-              )}
-              key={route.to}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-2">
-                  <p className="font-medium">{route.label}</p>
-                  <p className="text-sm text-muted-foreground">{route.description}</p>
-                </div>
-                <Icon className="mt-0.5 size-4 text-muted-foreground" />
-              </div>
-              <div className="mt-4">
-                <Button asChild size="sm" type="button" variant={isCurrent ? "default" : "outline"}>
-                  <Link aria-current={isCurrent ? "page" : undefined} to={route.to}>
-                    {isCurrent ? "Current page" : "Open route"}
-                  </Link>
-                </Button>
-              </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        {customerRouteGroups.map((group) => (
+          <div className="space-y-3" key={group.label}>
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                {group.label}
+              </p>
+              <p className="text-sm text-muted-foreground">{group.description}</p>
             </div>
-          );
-        })}
-      </CardContent>
-    </Card>
+            <div className="flex flex-wrap gap-2">
+              {group.routes.map((route) => {
+                const isCurrent = route.to === currentPath;
+
+                return (
+                  <Button
+                    asChild
+                    key={route.to}
+                    size="sm"
+                    type="button"
+                    variant={isCurrent ? "default" : "outline"}
+                  >
+                    <Link aria-current={isCurrent ? "page" : undefined} to={route.to}>
+                      <route.icon className="size-4" />
+                      {route.label}
+                    </Link>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </nav>
   );
 }
